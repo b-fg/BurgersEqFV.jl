@@ -8,7 +8,10 @@ using InteractiveUtils
 using BenchmarkTools
 
 # ╔═╡ 15283d9e-cb12-4626-88ca-be7380acb5a6
-using PlutoUI; PlutoUI.LocalResource("./img/fv.svg", (:height => 80))
+begin
+	using PlutoUI
+	PlutoUI.Resource("https://github.com/b-fg/BurgersEqFV.jl/blob/main/img/fv.svg?raw=true", (:height => 	80))
+end
 
 # ╔═╡ c483b5f8-da98-43e2-9f61-f5db8e89e9cc
 md"""
@@ -213,7 +216,7 @@ $u^R_{i+1/2} = u_{i+1} + \dfrac{1}{4}\left[(1-k)(u_{i+1}-u_{i+2}) + (1+k)(u_{i}-
 
 
 # ╔═╡ 321c8604-d0a9-4bff-894e-e64025499c47
-PlutoUI.LocalResource("./img/kscheme.svg", (:height => 130))
+PlutoUI.Resource("https://github.com/b-fg/BurgersEqFV.jl/blob/main/img/kscheme.svg?raw=true", (:height => 	130))
 
 # ╔═╡ e18166c1-5096-4d1b-9e65-562d5aca016d
 md"
