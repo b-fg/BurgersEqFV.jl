@@ -5,7 +5,7 @@ using Markdown
 using InteractiveUtils
 
 # ╔═╡ b933b337-8eaa-4cc5-b8d4-bfe784b8fd0a
-using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test
+using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2
 
 # ╔═╡ 15283d9e-cb12-4626-88ca-be7380acb5a6
 begin
@@ -17,9 +17,6 @@ end
 md"""
 # Deriving optimal data-driven numerical schemes for implicit turbulence modelling in Julia
 """
-
-# ╔═╡ 16d407e1-0e61-4ee7-ad4f-e790ef18c068
-TableOfContents(depth=4)
 
 # ╔═╡ 6200cb59-cbf4-448e-bd34-e2ab8e1582fe
 md"
@@ -62,8 +59,8 @@ end
 md"And now we loop through it to operate element-wise"
 
 # ╔═╡ 4cd1ea7f-331b-4b3c-a280-2041de98af2e
-begin
-	for i in 1:N # even better use `eachindex(a)` instead of `1:N`
+let
+	for i in eachindex(a) # even better use `eachindex(a)` instead of `1:N`
 		a[i] = i * i
 	end
 	a
@@ -155,13 +152,13 @@ begin
 end
 
 # ╔═╡ 9b00dd03-996e-4bb3-96a1-e6c19190a352
-begin
+let
 	triangle = Triangle(4,5) # used default constractor
 	area(triangle)
 end
 
 # ╔═╡ f67ff160-bb45-49df-a282-800313f19fdc
-begin
+let
 	circle = Circle(3.0)
 	area(circle)
 end
@@ -241,7 +238,7 @@ Note that the scheme goes from being fully upwind (-1) to fully central (1). Val
 # ╔═╡ 02e1a59c-c747-4bf0-93a8-074ea7f88f9b
 md"Next, after computing $u_L$ and $u_R$, we need to define how the intercell flux will be computed. Note that this numerical flux is unique to each face! That is $f_{i+1/2} = -f_{(i+1)-1/2}$.
 
-We choose the [Rusanov flux](link) to solve the two-point value problem at the face.
+We choose the [Rusanov flux](link) to solve the Riemann problem at the face (two states at the same location)
 
 $f_{i+1/2}(u_L,u_R) = \dfrac{1}{2}(f(u_L) + f(u_R)) - \dfrac{1}{2}\max{(|u_L|, |u_R|)}(u_R-u_L)$
 
@@ -249,13 +246,13 @@ Let's define the function for computing the convective flux using the Rusanov sc
 "
 
 # ╔═╡ e4327a21-904b-4bab-9179-442dea00dda5
-begin
-	flux(u) = u * u / 2
-	function f_conv(um, ui, up, upp, k) # k-scheme + Rusanov
-		uL = kscheme(um, ui, up, k)
-		uR = kscheme(upp, up, ui, k)
-		1 / 2 * (flux(uL) + flux(uR)) - 1 / 2 * max(abs(uL), abs(uR)) * (uR - uL)
-	end
+flux(u) = u * u / 2
+
+# ╔═╡ f1bcffa8-f632-445c-bbe6-3949bfec22ba
+function f_conv(um, ui, up, upp, k) # k-scheme + Rusanov
+	uL = kscheme(um, ui, up, k)
+	uR = kscheme(upp, up, ui, k)
+	1 / 2 * (flux(uL) + flux(uR)) - 1 / 2 * (uR - uL) * max(abs(uL), abs(uR))
 end
 
 # ╔═╡ 67182a64-3145-4aaf-a766-56b7ce5292ea
@@ -281,7 +278,7 @@ Let's write the dissipative flux function
 "
 
 # ╔═╡ fc23f17b-753a-40bd-80aa-cbf61a930717
-f_diss(um, ui, up, ν, dx) = ν * (up - 2ui + um) / (dx^2)
+f_diss(ui, up, ν, dx) = ν * (up - ui) / dx
 
 # ╔═╡ 8e2ad2d1-0d7c-44a1-95a6-1609244e525e
 md"#### Semi-discrete final form
@@ -289,11 +286,11 @@ md"#### Semi-discrete final form
 Adding the convective flux (`f_conv`) and the dissipative flux (`f_diss`) will provide us with the full RHS of the original PDE. As noted, the only variables needed are the discrete solution $u_i$, viscosity $\nu$, cell size $δx$, and $k$ value for the face-reconstruction scheme. In functional form"
 
 # ╔═╡ f0e04804-3014-4b93-a8dc-428c8a7087e1
-function dudt!(rhs, u, fK, ν, dx, k)
-	um, up, upp, fKm = @views u[0:end-1], u[2:end+1], u[3:end+2], fK[0:end-1]
+function dudt!(rhs, ui, fK, ν, dx, k)
+	um, up, upp, fKm = @views ui[0:end-1], ui[2:end+1], ui[3:end+2], fK[0:end-1]
 
-    @. fK = f_conv(um, ui, up, upp, k) - f_diss(um, ui, up, ν, dx)
-    @. rhs = -(fK - fKm1) / dx + ν * (up1 - 2u + um1) / (dx^2)
+    @. fK = f_conv(um, ui, up, upp, k) - f_diss(ui, up, ν, dx)
+    @. rhs = -(fK - fKm) / dx
 end
 
 # ╔═╡ bf3bb88e-36d2-4c64-942c-f14d13072924
@@ -380,16 +377,229 @@ begin
 	@test a_periodic[end+1] == a_periodic[1]
 end
 
+# ╔═╡ eab80a8c-6f0b-4715-b069-cff8ff8462c3
+md"Instead, we see that we cannot do this with standard arrays"
+
+# ╔═╡ 83adcff0-ec11-430b-bfd3-dc08fbc5fb41
+a[end+1] == a[1]
+
 # ╔═╡ a97a40e6-cc4a-4ae8-a99f-edf357bfec49
-md"#### Initial condition"
+md"#### Initial condition
+
+Instead of considering the initial condition for $u_i$, we set an initial condition for the **energy spectrum** of $u_i$. That is, we set an analytical function for $\hat{E}(\kappa)$, ie. the energy content of $u_i$ in Fourier space ($\kappa$). The analytical function for $\hat{E}(\kappa)$ is
+
+$\hat{E}(\kappa) = A^4\kappa^4e^{-(\kappa/\kappa_0)^2}$
+
+where $A$ is a constant set as $A=2k_0^{-5}/(3\sqrt{\pi})$ so that $\int_0^\infty\hat{E}(\kappa)\mathrm{d}\kappa=1/2$. Here $\kappa_0$ is the wavenumber at which we want the energy to peak, and we select $\kappa_0=10$.
+
+The mode amplitude of the initial condition at each wavenumber is $|\hat{u}(\kappa)|=\sqrt{2\hat{E}(\kappa)}$ (ie. the amplitude of harmonic functions of course). So we find each mode amplitude and frequency with
+
+$\hat{u}(\kappa)=\sqrt{2\hat{E}(\kappa)}e^{i2\pi R(\kappa)}$
+
+where $e^{i2\pi R(\kappa)}$ sets a random phase $(0,2\pi)$ for each wavenumber through the random uniform sampler $R(\kappa)\in[0,1]$.
+
+Finally, we need to transform back our initial condition from Fourier space, $\hat{u}_i(\kappa,0)$ to physical space $u_i(x,0)$ using the inverse Fast Fourier Transfrom (FFT).
+
+Let's code it up!
+"
+
+# ╔═╡ fdc61704-a029-4b5f-a0eb-df77655e398b
+function u0(N, L; k0=10, T=Float64, i=1)
+    Random.seed!(i) # set random seed for different runs!
+    A = 2k0^(-5) / (3√π) # constant
+    k = rfftfreq(N, 2π / L * N) # [0, 1, 2, ..., N÷2]
+    Ek = @. A * k^4 * exp(-(k / k0)^2)
+    R = rand(N÷2+1) # random number generator for random phases
+    uk = sqrt.(2Ek) .* exp.(im * 2π * R)
+	u = real(irfft(uk, N) * N) # use inverse real fft   
+	return T.(u)
+end
+
+
+# ╔═╡ cee27da9-5dfe-4ba1-b05a-66279c9ed3a3
+md"Now we check that our implementation is correct"
+
+# ╔═╡ 2ddd6297-9015-4b26-875d-09237bd51c65
+begin # Check E=1/2
+	u_IC = u0(64, 2π)
+	E = energy(u_IC)
+	println("E = $E")
+	@test isapprox(energy(u_IC), 1/2; rtol=0.1)
+end
+
+# ╔═╡ 7b16ed74-2039-4261-9aea-6db54971969a
+md"### Visualization
+
+To verify code implementetion, visual checks are also very useful! So we will plot both the solution (or state) and its spectrum.
+
+#### Spectrum
+To compute the spectrum we will use again the FFT now in forward (not inverse mode)
+"
+
+# ╔═╡ 8326d605-5452-4fe6-b2f3-16e6acbbeb48
+function spectrum(u; L=2π)
+    N = length(u)
+    uk = rfft(Array(u)) / N # need to convert from CircularArray to default Array
+    Ek = 1 / 2 * uk .* conj(uk) |> real # compute energy in Fourier space
+    k = rfftfreq(N, 2π / L * N) # [0, 1, 2, ..., N÷2]
+    return k, Ek
+end
+
+# ╔═╡ 66eebc57-5b3f-4c1e-a7bf-c107242cc1f1
+begin # Just some options for making the plots more beautiful
+	my_Ek_axis_props = (
+		xlabel = L"$\kappa$",
+		ylabel = L"$E(\kappa)$",
+        xscale = log10,
+        yscale = log10,
+        limits = (1, 1e4, 1e-11, 1e-1),
+        yticks = LogTicks(LinearTicks(10)),
+        xminorticksvisible = true,
+        xminorticks = IntervalsBetween(10)
+    )
+	my_u_axis_props = (
+		xlabel = L"$x$",
+		ylabel = L"$u_i$",
+		xminorticksvisible = true,
+        yminorticksvisible = true,
+        xminorticks = IntervalsBetween(2),
+        yminorticks = IntervalsBetween(2),
+        limits = (0, 2π, -3, 3),
+	)
+	my_theme_default = Theme(
+	    figure_padding = 15,
+	    fontsize = 18,
+	    linewidth = 2,
+	    size = (500, 350)
+	);
+	my_theme_default = merge(theme_latexfonts(), my_theme_default)
+	set_theme!(my_theme_default)
+	
+	function get_Ek_data(fname)
+		data = take!(Downloads.download("https://github.com/b-fg/BurgersEqFV.jl/blob/main/data/$fname?raw=true", IOBuffer())) |> IOBuffer
+		k_DNS, Ek_DNS = jldopen(data) do f
+	    	f["k"], f["Ek"]
+		end
+		k_DNS, Ek_DNS
+	end
+end;
+
+# ╔═╡ 3e684e9d-48eb-4fc7-8448-a9c5681015f3
+md"And then we define the plotting function using [Makie](https://docs.makie.org/stable/). Note that some plotting parameters are hidden in the previous cell because they are not important. Also the function to get data already generated is hidden there."
+
+# ╔═╡ 5b730ef5-d5d6-419c-9f75-0c4b4bab018a
+function plotEk(u; L=2π, dns_fname=nothing)
+	k, Ek = spectrum(u; L)
+
+	fig = Figure()
+	ax = Axis(fig[1, 1]; my_Ek_axis_props...)
+
+	Ek_label = latexstring(raw"$N=2^{" * string(1+Int(log2(length(k)-1))) * raw"}$")
+	lines!(ax, k, Ek, label=Ek_label) # E(k) plot
+	vlines!(ax, length(k), color=:black, alpha=1, linestyle=:dash, linewidth=0.25) # wavenumber cutoff
+
+	if !isnothing(dns_fname)
+		k_DNS, Ek_DNS = get_Ek_data(dns_fname)
+		lines!(ax, k_DNS, Ek_DNS, label=L"DNS ($N=2^{13}$), $t=0.1$", color=:black) # E(k) plot from DNS data
+	end
+	
+	axislegend(ax, position=:rt, framewidth=0.1, alpha=0.1) # add legend
+	return fig
+end
+
+# ╔═╡ 8cd58cda-be07-4508-919b-115b789c3e9f
+plotEk(u0(64, 2π))
+
+# ╔═╡ 2a1f2672-23db-4dbb-89be-7fd6ae69ac49
+md"Actually, we will also want to visualize the spectrum of the direct numerical simulations (DNS) solution on top of our coarse simulation. This simulation has already been run, and data can be find [here](https://github.com/b-fg/BurgersEqFV.jl/tree/main/data). So let's get that spectrum and plot it on top of our initial condition spectrum" 
+
+# ╔═╡ eb8ba9fe-9852-45af-8b49-678f86ea98ee
+plotEk(u0(64, 2π); dns_fname="p13_t0.10_nu5e-04_spectrum.jld2")
+
+# ╔═╡ bf7d1b86-bf6a-4c5d-81ff-b9d6bed9b25d
+md"Note that the DNS solution is computed in a x128 finer grid ($N=2^{13}=8192$ cells), and this spectrum is captured at solution time $t=0.1$."
+
+# ╔═╡ 187aec84-7fdf-483e-b502-60b258e2ae21
+md"#### Solution state
+
+And now let's see how our initial condition actually looks like! We will plot $u$ in real space. But for this, we need to define our grid first. Here, our assumption is that we have uniform spacing, and that our solution is the cell average value stored at the center of the cell (as per FVM). Then, we can define a grid like"
+
+# ╔═╡ aef3c34f-217c-40cc-8653-fda0094ea5fc
+xg(N, L; T=Float64) = range(0, N - 1) .* L / N .+ (L / N / 2) |> collect .|> T
+
+# ╔═╡ 68cbbbc5-5137-4351-83b7-297255b139c0
+md"And test this for a small grid. We should see how our grid is stored in the cell center. For $N=10$, a $L=10$ domain size yields to $\delta x=1$, so our first grid point should be at $x_1=0.5$"
+
+# ╔═╡ a17118f2-6742-4c24-84ea-cb208020e91d
+xg(10, 10)
+
+# ╔═╡ 6725e24d-aab5-43bb-b615-62e6522be267
+md"With the grid in place, let's define the function to plot the solution state"
+
+# ╔═╡ 84573f4c-1fba-4320-9c6b-fe3eb61ba2c8
+function plotU(x, u)
+    fig = Figure()
+	ax = Axis(fig[1, 1]; my_u_axis_props...)
+    lines!(ax, x, u)
+    return fig
+end
+
+# ╔═╡ 91e0be80-d466-406d-90fe-d446b5dab172
+let
+	N, L = 2^8, 2π
+	plotU(xg(N, L), u0(N, L))
+end
+
+# ╔═╡ f943b4af-fcda-4327-bade-d3c6cc5192ea
+md"### Running a simulation
+
+We have all we need now to run our first simulation! So let's get at it. We first define our global parameters, such as number of cells `N`, domain size `L`, viscosity $\nu$, or floating-point precision `T`. Then, we can generate an initial condition with the `u0` function, and use the `timeloop!` function to advance the solution in time
+"
+
+# ╔═╡ 9830f062-88ae-47f4-b021-401ffa69f423
+let
+	N = 2^8 # number of cells
+	L = 2π # domain size
+	ν = 5e-4 # viscosity
+	T = Float64 # floating point precision
+	# k-scheme value: -1≡Upwind(2ndO), 0≡Fromm(2ndO), 1/3≡VanLeer(3rdO), 1/2≡QUICK(3rdO), 1≡Central(2ndO)
+	k = -1
+
+	u = u0(N, L; T) |> CircularArray
+	rhs = similar(u) |> x -> fill!(x, 0) # RHS array (allocate an array like u, then rhs .= 0)
+	fK = similar(u) |> x -> fill!(x, 0) # Intercell flux array
+	x, dx = xg(N, L; T), L / N
+
+	timeloop!(u, rhs, fK, ν, dx, k; t_max=0.1, CFL=0.1)
+	plotU(x, u);
+	
+end
+
+# ╔═╡ 88be22fb-b1bd-4727-a7e9-ce211e30929d
+html"""
+<style>
+	main {
+		margin: 0 auto;
+		max-width: 1100px;
+    	padding-left: max(20px, 5%);
+    	padding-right: max(200px, 5%);
+	}
+</style>
+"""
+
+# ╔═╡ 89c19359-564a-474a-bcf7-43528e39b7a4
+TableOfContents(depth=4)
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CircularArrays = "7a955b69-7140-5f4e-a0ed-f168c5e2e749"
+Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
@@ -400,6 +610,8 @@ BenchmarkTools = "~1.6.3"
 CircularArrays = "~1.4.0"
 FFTW = "~1.10.0"
 GLMakie = "~0.13.8"
+JLD2 = "~0.6.3"
+LaTeXStrings = "~1.4.0"
 PlutoUI = "~0.7.79"
 """
 
@@ -409,7 +621,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.11.5"
 manifest_format = "2.0"
-project_hash = "2d1f59f07096005e617baef7498b19f87eec88e6"
+project_hash = "77dc316bfac0dcb7a67f7a252b03b927021f5b72"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -544,6 +756,23 @@ weakdeps = ["SparseArrays"]
 
     [deps.ChainRulesCore.extensions]
     ChainRulesCoreSparseArraysExt = "SparseArrays"
+
+[[deps.ChunkCodecCore]]
+git-tree-sha1 = "1a3ad7e16a321667698a19e77362b35a1e94c544"
+uuid = "0b6fb165-00bc-4d37-ab8b-79f91016dbe1"
+version = "1.0.1"
+
+[[deps.ChunkCodecLibZlib]]
+deps = ["ChunkCodecCore", "Zlib_jll"]
+git-tree-sha1 = "cee8104904c53d39eb94fd06cbe60cb5acde7177"
+uuid = "4c0bbee4-addc-4d73-81a0-b6caacae83c8"
+version = "1.0.0"
+
+[[deps.ChunkCodecLibZstd]]
+deps = ["ChunkCodecCore", "Zstd_jll"]
+git-tree-sha1 = "34d9873079e4cb3d0c62926a225136824677073f"
+uuid = "55437552-ac27-4d47-9aa3-63184e8fd398"
+version = "1.0.0"
 
 [[deps.CircularArrays]]
 deps = ["OffsetArrays"]
@@ -916,6 +1145,11 @@ git-tree-sha1 = "f923f9a774fcf3f5cb761bfa43aeadd689714813"
 uuid = "2e76f6c2-a576-52d4-95c1-20adfe4de566"
 version = "8.5.1+0"
 
+[[deps.HashArrayMappedTries]]
+git-tree-sha1 = "2eaa69a7cab70a52b9687c8bf950a5a93ec895ae"
+uuid = "076d061b-32b6-4027-95e0-9a2c6f6d7e74"
+version = "0.2.0"
+
 [[deps.HypergeometricFunctions]]
 deps = ["LinearAlgebra", "OpenLibm_jll", "SpecialFunctions"]
 git-tree-sha1 = "68c173f4f449de5b438ee67ed0c9c748dc31a2ec"
@@ -1085,6 +1319,18 @@ version = "1.10.0"
 git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
 uuid = "82899510-4779-5014-852e-03e436cf321d"
 version = "1.0.0"
+
+[[deps.JLD2]]
+deps = ["ChunkCodecLibZlib", "ChunkCodecLibZstd", "FileIO", "MacroTools", "Mmap", "OrderedCollections", "PrecompileTools", "ScopedValues"]
+git-tree-sha1 = "8f8ff711442d1f4cfc0d86133e7ee03d62ec9b98"
+uuid = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+version = "0.6.3"
+
+    [deps.JLD2.extensions]
+    UnPackExt = "UnPack"
+
+    [deps.JLD2.weakdeps]
+    UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 
 [[deps.JLLWrappers]]
 deps = ["Artifacts", "Preferences"]
@@ -1626,6 +1872,12 @@ git-tree-sha1 = "e24dc23107d426a096d3eae6c165b921e74c18e4"
 uuid = "fdea26ae-647d-5447-a871-4b548cad5224"
 version = "3.7.2"
 
+[[deps.ScopedValues]]
+deps = ["HashArrayMappedTries", "Logging"]
+git-tree-sha1 = "c3b2323466378a2ba15bea4b2f73b081e022f473"
+uuid = "7e506255-f358-4e82-b7e4-beb19740aa63"
+version = "1.5.0"
+
 [[deps.Scratch]]
 deps = ["Dates"]
 git-tree-sha1 = "9b81b8393e50b7d4e6d0a9f14e192294d3b7c109"
@@ -2123,7 +2375,6 @@ version = "1.13.0+0"
 
 # ╔═╡ Cell order:
 # ╟─c483b5f8-da98-43e2-9f61-f5db8e89e9cc
-# ╠═16d407e1-0e61-4ee7-ad4f-e790ef18c068
 # ╟─6200cb59-cbf4-448e-bd34-e2ab8e1582fe
 # ╟─64b763b5-3e17-469f-b6c5-69c109529977
 # ╠═b933b337-8eaa-4cc5-b8d4-bfe784b8fd0a
@@ -2151,7 +2402,7 @@ version = "1.13.0+0"
 # ╠═f67ff160-bb45-49df-a282-800313f19fdc
 # ╠═8ef9fa67-5f5f-4616-9342-6cc484ae4755
 # ╟─19a15fe3-63c6-405c-8d2e-5e25816608ab
-# ╠═44d5b669-03f9-43b7-8248-6b4cfc2f8985
+# ╟─44d5b669-03f9-43b7-8248-6b4cfc2f8985
 # ╟─15283d9e-cb12-4626-88ca-be7380acb5a6
 # ╟─b022fe41-000e-440a-9ef9-28697fdb6d72
 # ╟─8f324c5d-5a5d-404e-92de-9c4a0aa79397
@@ -2160,6 +2411,7 @@ version = "1.13.0+0"
 # ╟─e18166c1-5096-4d1b-9e65-562d5aca016d
 # ╟─02e1a59c-c747-4bf0-93a8-074ea7f88f9b
 # ╠═e4327a21-904b-4bab-9179-442dea00dda5
+# ╠═f1bcffa8-f632-445c-bbe6-3949bfec22ba
 # ╟─67182a64-3145-4aaf-a766-56b7ce5292ea
 # ╟─57633811-38aa-4b57-9c5d-2573c4aef2e6
 # ╠═fc23f17b-753a-40bd-80aa-cbf61a930717
@@ -2172,8 +2424,33 @@ version = "1.13.0+0"
 # ╠═82475ecb-cdf3-496c-a52b-f98551ebff59
 # ╠═f7ccdbff-483b-4506-ae94-0fffb38529f5
 # ╠═50b6ec5f-5703-4f02-90d0-1cf65501ad26
-# ╠═0a18cd65-8b71-45ca-9f5e-efecdd5a9652
+# ╟─0a18cd65-8b71-45ca-9f5e-efecdd5a9652
 # ╠═c693332c-e754-4f13-a218-9616814e22be
-# ╠═a97a40e6-cc4a-4ae8-a99f-edf357bfec49
+# ╟─eab80a8c-6f0b-4715-b069-cff8ff8462c3
+# ╠═83adcff0-ec11-430b-bfd3-dc08fbc5fb41
+# ╟─a97a40e6-cc4a-4ae8-a99f-edf357bfec49
+# ╠═fdc61704-a029-4b5f-a0eb-df77655e398b
+# ╠═cee27da9-5dfe-4ba1-b05a-66279c9ed3a3
+# ╠═2ddd6297-9015-4b26-875d-09237bd51c65
+# ╠═7b16ed74-2039-4261-9aea-6db54971969a
+# ╠═8326d605-5452-4fe6-b2f3-16e6acbbeb48
+# ╟─66eebc57-5b3f-4c1e-a7bf-c107242cc1f1
+# ╠═3e684e9d-48eb-4fc7-8448-a9c5681015f3
+# ╠═5b730ef5-d5d6-419c-9f75-0c4b4bab018a
+# ╠═8cd58cda-be07-4508-919b-115b789c3e9f
+# ╟─2a1f2672-23db-4dbb-89be-7fd6ae69ac49
+# ╠═eb8ba9fe-9852-45af-8b49-678f86ea98ee
+# ╟─bf7d1b86-bf6a-4c5d-81ff-b9d6bed9b25d
+# ╠═187aec84-7fdf-483e-b502-60b258e2ae21
+# ╠═aef3c34f-217c-40cc-8653-fda0094ea5fc
+# ╟─68cbbbc5-5137-4351-83b7-297255b139c0
+# ╠═a17118f2-6742-4c24-84ea-cb208020e91d
+# ╠═6725e24d-aab5-43bb-b615-62e6522be267
+# ╠═84573f4c-1fba-4320-9c6b-fe3eb61ba2c8
+# ╠═91e0be80-d466-406d-90fe-d446b5dab172
+# ╠═f943b4af-fcda-4327-bade-d3c6cc5192ea
+# ╠═9830f062-88ae-47f4-b021-401ffa69f423
+# ╟─88be22fb-b1bd-4727-a7e9-ce211e30929d
+# ╟─89c19359-564a-474a-bcf7-43528e39b7a4
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
