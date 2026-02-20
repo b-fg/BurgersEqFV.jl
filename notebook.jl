@@ -17,7 +17,7 @@ macro bind(def, element)
 end
 
 # ╔═╡ b933b337-8eaa-4cc5-b8d4-bfe784b8fd0a
-using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2, PlutoUI, Roots, ForwardDiff, ADTypes, AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
+using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2, PlutoUI, Roots, ForwardDiff, ADTypes, AbstractFFTs
 
 
 # ╔═╡ c483b5f8-da98-43e2-9f61-f5db8e89e9cc
