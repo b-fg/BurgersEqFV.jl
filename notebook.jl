@@ -360,7 +360,7 @@ With the semi-discrete form of the PDE arising with the FVM, and the temporal in
 
 # ╔═╡ 50b6ec5f-5703-4f02-90d0-1cf65501ad26
 begin
-	function timeloop!(u, rhs, fK, ν, dx, k; t_max=0.1, CFL=0.1)
+	function timeloop!(u, rhs, fK, ν, dx, k; t_max=0.1, CFL=0.1, verbose=true)
 		t, i = 0.0, 0
 		while t < t_max
 			dudt!(rhs, u, fK, ν, dx, k)
@@ -368,7 +368,7 @@ begin
 			stepEuler!(u, rhs, dt)
 			t += dt
 			i += 1
-			println(info(i, u, dt, t))
+			verbose && println(info(i, u, dt, t))
 		end
 	end
 	energy(u) = 1/2 * sum(abs2, u) / length(u)
@@ -395,7 +395,7 @@ end
 md"Instead, we see that we cannot do this with standard arrays"
 
 # ╔═╡ 83adcff0-ec11-430b-bfd3-dc08fbc5fb41
-a[end+1] == a[1]
+@error a[end+1] == a[1]
 
 # ╔═╡ a97a40e6-cc4a-4ae8-a99f-edf357bfec49
 md"#### Initial condition
@@ -501,10 +501,14 @@ end;
 # ╔═╡ 3e684e9d-48eb-4fc7-8448-a9c5681015f3
 md"And then we define the plotting function using [Makie](https://docs.makie.org/stable/). Note that some plotting parameters are hidden in the previous cell because they are not important. Also the function to get data already generated is hidden there."
 
-# ╔═╡ 5b730ef5-d5d6-419c-9f75-0c4b4bab018a
+# ╔═╡ 45cdb3a3-8a9e-464a-8630-75c6342686d2
 function plotEk(u; L=2π, dns_data=nothing)
 	k, Ek = spectrum(u; L)
+	plotEk(k, Ek; L, dns_data)
+end
 
+# ╔═╡ 5b730ef5-d5d6-419c-9f75-0c4b4bab018a
+function plotEk(k, Ek; L=2π, dns_data=nothing)
 	fig = Figure()
 	ax = Axis(fig[1, 1]; my_Ek_axis_props...)
 
@@ -580,17 +584,24 @@ Remember that:
 -  $$k=1/3$$: 3rd-order
 -  $$k=1/2$$: QUICK 3rd-order
 -  $$k=1$$: Central 2nd-order
-
-$(@bind k_slider1 PlutoUI.Slider(-1:0.1:1, show_value = true))
 "
 
+# ╔═╡ 9983affa-5365-49c0-9ede-2dcb33b40cde
+md" $k=$ $(k_slider1 = @bind k_val1 PlutoUI.Slider(-1:0.1:1, show_value=true))"
+
+# ╔═╡ f12cd093-a64c-4523-a440-b921571b8697
+md" $p=$ $(@bind p_val1 PlutoUI.Slider(6:13, show_value=true))"
+
+# ╔═╡ 556a13d8-8e82-45b0-8173-7fa12863f93d
+md" $N=2^p$"
+
 # ╔═╡ e3314223-f671-4d61-8d4c-58086fb157a3
-function run(N; L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, i=1)
+function run(N; k=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, i=1, verbose=true)
 	u = u0(N, L; T, i) |> CircularArray
 	rhs = similar(u) |> x -> fill!(x, 0) # RHS array (allocate an array like u, then rhs .= 0)
 	fK = similar(u) |> x -> fill!(x, 0) # Intercell flux array
 	dx = L / N
-	timeloop!(u, rhs, fK, ν, dx, k_slider1; t_max, CFL)
+	timeloop!(u, rhs, fK, ν, dx, k; t_max, CFL, verbose)
 	return u
 end
 
@@ -603,8 +614,8 @@ end
 
 # ╔═╡ b6a9f4e2-5780-43ec-811f-855be3749524
 let
-	N = 2^8
-	u = run(N)
+	N = 2^p_val1
+	u = run(N; k=k_val1)
 	x = xg(N, 2π; T=eltype(u))
 	plot(x, u)
 end
@@ -613,17 +624,43 @@ end
 md"We see that our spectrum is very noisy compared to the DNS one. That's because the DNS spectrum is in fact an average of 512 different simulations (with different random initial conditions). So we will do the same for our large-eddy simulation (coarse DNS). Note that we pass the simulation counter `i` to be the seed of our Random number generator in the initial condition `u0(N, L; T, i)` so that each initial condition is different"
 
 # ╔═╡ 56303400-a58b-48b2-93e1-fbadfb37d308
-function run_ensemble(N, M; L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64)
-	Ek_i = zeros(T, N÷2+1, M)
+function run_ensemble(N, M; k=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, verbose=false)
+	Ek_i, u = zeros(T, N÷2+1, M), nothing
 	for i in 1:M
-		u = run(N; i)
+		u = run(N; k, i, verbose)
 		_, Ek = spectrum(u)
-		push!(Ek_i, Ek)
+		Ek_i[:, i] .= Ek
 	end
 	Ek_mean = mean(Ek_i, dims=2)[:]
+	return u, Ek_mean
+end	
+
+# ╔═╡ 5c9b6fb1-a5cd-4c38-926c-29df4e63d71f
+md" $M=$ $(@bind M_val PlutoUI.Slider(1:32, show_value=true))"
+
+# ╔═╡ 5a542cae-1f3d-44df-8ca3-da4c5f8377df
+md" $k=$ $(k_slider2 = @bind k_val2 PlutoUI.Slider(-1:0.1:1, show_value=true))"
+
+# ╔═╡ 4a4e46cd-d742-4f9a-b391-a209757bd50a
+md" $p=$ $(@bind p_val2 PlutoUI.Slider(6:12, show_value=true))"
+
+# ╔═╡ 6baba5db-89b3-4cd8-bc98-1f0f8ec17c32
+md" $N=2^p$
+
+"
+
+# ╔═╡ 4fcbf8f0-a226-4a58-8fbc-89d37641db3d
+let
+	M = M_val
+	N = 2^p_val2
+	L = 2π
+	u, Ek_mean = run_ensemble(N, M_val; k=k_val2)
 	k = rfftfreq(N, 2π / L * N)
+	plotEk(k, Ek_mean; L, dns_data=(k_dns, Ek_dns))
 end
-	
+
+# ╔═╡ 5761ec37-1578-4adf-ae04-8002efe7b225
+md"We see that the more simulations we run in the ensemble, the less noisy our spectrum gets! Also not how the spectrum changes with different values of $\kappa$. Moving towards upwind scheme, $\kappa<0$, adds numerical dissipation, and the energy at small scales (high wavenumbers) gets significantly reduce. Moving towards central schemes, $\kappa>0$, makes our solution accumulate energy at small scales because the scheme produces spourious oscillations near discontinuities and there is not enough numerical dissipation to get rid of it."
 
 # ╔═╡ 88be22fb-b1bd-4727-a7e9-ce211e30929d
 html"""
@@ -2600,6 +2637,7 @@ version = "1.13.0+0"
 # ╠═8326d605-5452-4fe6-b2f3-16e6acbbeb48
 # ╟─66eebc57-5b3f-4c1e-a7bf-c107242cc1f1
 # ╠═3e684e9d-48eb-4fc7-8448-a9c5681015f3
+# ╠═45cdb3a3-8a9e-464a-8630-75c6342686d2
 # ╠═5b730ef5-d5d6-419c-9f75-0c4b4bab018a
 # ╠═8cd58cda-be07-4508-919b-115b789c3e9f
 # ╟─2a1f2672-23db-4dbb-89be-7fd6ae69ac49
@@ -2614,11 +2652,20 @@ version = "1.13.0+0"
 # ╠═84573f4c-1fba-4320-9c6b-fe3eb61ba2c8
 # ╠═91e0be80-d466-406d-90fe-d446b5dab172
 # ╟─f943b4af-fcda-4327-bade-d3c6cc5192ea
+# ╟─9983affa-5365-49c0-9ede-2dcb33b40cde
+# ╟─f12cd093-a64c-4523-a440-b921571b8697
+# ╟─556a13d8-8e82-45b0-8173-7fa12863f93d
 # ╠═e3314223-f671-4d61-8d4c-58086fb157a3
-# ╠═3d5eb2df-709c-4595-a173-500338149eec
+# ╟─3d5eb2df-709c-4595-a173-500338149eec
 # ╠═b6a9f4e2-5780-43ec-811f-855be3749524
 # ╟─e51b6e28-84c8-4dd1-9e40-1fca0e665be2
 # ╠═56303400-a58b-48b2-93e1-fbadfb37d308
+# ╠═5c9b6fb1-a5cd-4c38-926c-29df4e63d71f
+# ╟─5a542cae-1f3d-44df-8ca3-da4c5f8377df
+# ╠═4a4e46cd-d742-4f9a-b391-a209757bd50a
+# ╟─6baba5db-89b3-4cd8-bc98-1f0f8ec17c32
+# ╠═4fcbf8f0-a226-4a58-8fbc-89d37641db3d
+# ╟─5761ec37-1578-4adf-ae04-8002efe7b225
 # ╟─88be22fb-b1bd-4727-a7e9-ce211e30929d
 # ╟─89c19359-564a-474a-bcf7-43528e39b7a4
 # ╟─00000000-0000-0000-0000-000000000001
