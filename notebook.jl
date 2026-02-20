@@ -4,14 +4,20 @@
 using Markdown
 using InteractiveUtils
 
-# ╔═╡ b933b337-8eaa-4cc5-b8d4-bfe784b8fd0a
-using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2
-
-# ╔═╡ 15283d9e-cb12-4626-88ca-be7380acb5a6
-begin
-	using PlutoUI
-	PlutoUI.Resource("https://github.com/b-fg/BurgersEqFV.jl/blob/main/img/fv.svg?raw=true", (:height => 	80))
+# This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
+macro bind(def, element)
+    #! format: off
+    return quote
+        local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
+        local el = $(esc(element))
+        global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
+        el
+    end
+    #! format: on
 end
+
+# ╔═╡ b933b337-8eaa-4cc5-b8d4-bfe784b8fd0a
+using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2, PlutoUI
 
 # ╔═╡ c483b5f8-da98-43e2-9f61-f5db8e89e9cc
 md"""
@@ -194,6 +200,10 @@ where ``\delta x=(x_{i+1/2}-x_{i-1/2})`` is the cell volume.
 The piecewise-constant values create discontinuities of the solution at the cells interface.  
 "
 
+# ╔═╡ 15283d9e-cb12-4626-88ca-be7380acb5a6
+PlutoUI.Resource("https://github.com/b-fg/BurgersEqFV.jl/blob/main/img/fv.svg?raw=true", (:height => 	80))
+
+
 # ╔═╡ b022fe41-000e-440a-9ef9-28697fdb6d72
 md"
 The FVM takes advantage of the Gauss theorem, where the integral form of the PDE can be transformed from the divergence of the flux into a summation of the flux across the faces of a cell
@@ -210,10 +220,13 @@ md"#### Numerical flux
 
 **Convective flux**
 
-Our next job is to define the intercell flux, aka. numerical flux, and a time-intergrator method. First, we focus on the convective flux $f_c=u^2/2$. Instead of using the piece-wise constant values at the $_{i+1/2}$ face, $u_i$ and $u_{i+1}$, we will reconstruct a higher-order solution using the [$k$-scheme by Van Leer](https://en.wikipedia.org/wiki/MUSCL_scheme#Piecewise_parabolic_reconstruction), a high-order generalization of the [MUSCL scheme](https://en.wikipedia.org/wiki/MUSCL_scheme), both for the left side of the face, $u^L_{i+1/2}$ and the right, $u^R_{i+1/2}$ (which is written symmetrically)
+Our next job is to define the intercell flux, aka. numerical flux, and a time-intergrator method.
+Importantly, we need the flux at the face, where a flux is $f=au$, and the wavespeed $a$ can also be a function of $u$, making the flux nonlinear as in the Burgers' equation. First, we focus on the convective flux $f_c=u^2/2$. Since we typically only have access to the cell-average value $u_i$, we first reconstruct the solution at the face $u_{i+1/2}$ and then compute the flux $f_{i+1/2}=f(u_{i+1/2})$, [''and that is the MUSCL approach''](https://doi.org/10.1016/j.jcp.2021.110640). For this, we resort to the [$k$-scheme family by Van Leer](https://en.wikipedia.org/wiki/MUSCL_scheme#Piecewise_parabolic_reconstruction), which allows for a high-order state reconstruction at the face. The left side of the face, $u^L_{i+1/2}$ and the right, $u^R_{i+1/2}$, which is written symmetrically, are given by
 
 $u^L_{i+1/2} = u_i + \dfrac{1}{4}\left[(1-k)(u_i-u_{i-1}) + (1+k)(u_{i+1}-u_i)\right]$
 $u^R_{i+1/2} = u_{i+1} + \dfrac{1}{4}\left[(1-k)(u_{i+1}-u_{i+2}) + (1+k)(u_{i}-u_{i+1})\right]$
+
+Noting that we only need to apply it once per face, as fluxes on the face must be unique in FVM!
 "
 
 
@@ -228,9 +241,9 @@ md"
 The $k$-scheme provides a tunable parameter, $k$, which can result in the following reconsuctrions:
 
 -  $$k=-1$$: Upwind 2nd-order
--  $$k=0$$: Fromm
--  $$k=1/3$$: ? 3rd-order
--  $$k=1/2$$: Quick 3rd-order
+-  $$k=0$$: Fromm 2nd-order
+-  $$k=1/3$$: 3rd-order
+-  $$k=1/2$$: QUICK 3rd-order
 -  $$k=1$$: Central 2nd-order
 
 Note that the scheme goes from being fully upwind (-1) to fully central (1). Values of $k<-1$ and $k>1$ are allowed, and they bias the reconstruction even more to the upwind and downwind directions, respectively."
@@ -553,7 +566,18 @@ end
 # ╔═╡ f943b4af-fcda-4327-bade-d3c6cc5192ea
 md"### Running a simulation
 
-We have all we need now to run our first simulation! So let's get at it. We first define our global parameters, such as number of cells `N`, domain size `L`, viscosity $\nu$, or floating-point precision `T`. Then, we can generate an initial condition with the `u0` function, and use the `timeloop!` function to advance the solution in time
+We have all we need now to run our first simulation! So let's get at it. We first define our global parameters, such as number of cells `N`, domain size `L`, viscosity $\nu$, or floating-point precision `T`. Then, we can generate an initial condition with the `u0` function, and use the `timeloop!` function to advance the solution in time.
+
+We can also play with the value $k$ of the vanLeer k-scheme, as introduced in [#Numerical-flux](#Numerical-flux).
+
+Remember that:
+-  $$k=-1$$: Upwind 2nd-order
+-  $$k=0$$: Fromm 2nd-order
+-  $$k=1/3$$: 3rd-order
+-  $$k=1/2$$: QUICK 3rd-order
+-  $$k=1$$: Central 2nd-order
+
+$(@bind k PlutoUI.Slider(-1:0.1:1, show_value = true))
 "
 
 # ╔═╡ 9830f062-88ae-47f4-b021-401ffa69f423
@@ -562,17 +586,18 @@ let
 	L = 2π # domain size
 	ν = 5e-4 # viscosity
 	T = Float64 # floating point precision
-	# k-scheme value: -1≡Upwind(2ndO), 0≡Fromm(2ndO), 1/3≡VanLeer(3rdO), 1/2≡QUICK(3rdO), 1≡Central(2ndO)
-	k = -1
+	t_max = 0.1
+	CFL = 0.25
 
 	u = u0(N, L; T) |> CircularArray
 	rhs = similar(u) |> x -> fill!(x, 0) # RHS array (allocate an array like u, then rhs .= 0)
 	fK = similar(u) |> x -> fill!(x, 0) # Intercell flux array
 	x, dx = xg(N, L; T), L / N
 
-	timeloop!(u, rhs, fK, ν, dx, k; t_max=0.1, CFL=0.1)
-	plotU(x, u);
-	
+	timeloop!(u, rhs, fK, ν, dx, k; t_max, CFL)
+	fig1 = plotU(x, u)
+	fig2 = plotEk(u; L)
+	PlutoUI.ExperimentalLayout.vbox([fig1, fig2])
 end
 
 # ╔═╡ 88be22fb-b1bd-4727-a7e9-ce211e30929d
@@ -2408,7 +2433,7 @@ version = "1.13.0+0"
 # ╟─8f324c5d-5a5d-404e-92de-9c4a0aa79397
 # ╟─321c8604-d0a9-4bff-894e-e64025499c47
 # ╠═7d9a98bd-e200-43f6-9acd-baa5bee15b43
-# ╟─e18166c1-5096-4d1b-9e65-562d5aca016d
+# ╠═e18166c1-5096-4d1b-9e65-562d5aca016d
 # ╟─02e1a59c-c747-4bf0-93a8-074ea7f88f9b
 # ╠═e4327a21-904b-4bab-9179-442dea00dda5
 # ╠═f1bcffa8-f632-445c-bbe6-3949bfec22ba
@@ -2434,7 +2459,7 @@ version = "1.13.0+0"
 # ╠═2ddd6297-9015-4b26-875d-09237bd51c65
 # ╠═7b16ed74-2039-4261-9aea-6db54971969a
 # ╠═8326d605-5452-4fe6-b2f3-16e6acbbeb48
-# ╟─66eebc57-5b3f-4c1e-a7bf-c107242cc1f1
+# ╠═66eebc57-5b3f-4c1e-a7bf-c107242cc1f1
 # ╠═3e684e9d-48eb-4fc7-8448-a9c5681015f3
 # ╠═5b730ef5-d5d6-419c-9f75-0c4b4bab018a
 # ╠═8cd58cda-be07-4508-919b-115b789c3e9f
