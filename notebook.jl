@@ -17,7 +17,8 @@ macro bind(def, element)
 end
 
 # ╔═╡ b933b337-8eaa-4cc5-b8d4-bfe784b8fd0a
-using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2, PlutoUI
+using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2, PlutoUI, Roots, ForwardDiff, ADTypes, AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
+
 
 # ╔═╡ c483b5f8-da98-43e2-9f61-f5db8e89e9cc
 md"""
@@ -501,7 +502,7 @@ end;
 md"And then we define the plotting function using [Makie](https://docs.makie.org/stable/). Note that some plotting parameters are hidden in the previous cell because they are not important. Also the function to get data already generated is hidden there."
 
 # ╔═╡ 5b730ef5-d5d6-419c-9f75-0c4b4bab018a
-function plotEk(u; L=2π, dns_fname=nothing)
+function plotEk(u; L=2π, dns_data=nothing)
 	k, Ek = spectrum(u; L)
 
 	fig = Figure()
@@ -511,8 +512,8 @@ function plotEk(u; L=2π, dns_fname=nothing)
 	lines!(ax, k, Ek, label=Ek_label) # E(k) plot
 	vlines!(ax, length(k), color=:black, alpha=1, linestyle=:dash, linewidth=0.25) # wavenumber cutoff
 
-	if !isnothing(dns_fname)
-		k_DNS, Ek_DNS = get_Ek_data(dns_fname)
+	if !isnothing(dns_data)
+		k_DNS, Ek_DNS = dns_data
 		lines!(ax, k_DNS, Ek_DNS, label=L"DNS ($N=2^{13}$), $t=0.1$", color=:black) # E(k) plot from DNS data
 	end
 	
@@ -526,8 +527,11 @@ plotEk(u0(64, 2π))
 # ╔═╡ 2a1f2672-23db-4dbb-89be-7fd6ae69ac49
 md"Actually, we will also want to visualize the spectrum of the direct numerical simulations (DNS) solution on top of our coarse simulation. This simulation has already been run, and data can be find [here](https://github.com/b-fg/BurgersEqFV.jl/tree/main/data). So let's get that spectrum and plot it on top of our initial condition spectrum" 
 
+# ╔═╡ 98634f8f-7d16-4460-bba3-707b4d31c6cd
+k_dns, Ek_dns = get_Ek_data("p13_t0.10_nu5e-04_spectrum.jld2")
+
 # ╔═╡ eb8ba9fe-9852-45af-8b49-678f86ea98ee
-plotEk(u0(64, 2π); dns_fname="p13_t0.10_nu5e-04_spectrum.jld2")
+plotEk(u0(64, 2π); dns_data=(k_dns, Ek_dns))
 
 # ╔═╡ bf7d1b86-bf6a-4c5d-81ff-b9d6bed9b25d
 md"Note that the DNS solution is computed in a x128 finer grid ($N=2^{13}=8192$ cells), and this spectrum is captured at solution time $t=0.1$."
@@ -577,28 +581,49 @@ Remember that:
 -  $$k=1/2$$: QUICK 3rd-order
 -  $$k=1$$: Central 2nd-order
 
-$(@bind k PlutoUI.Slider(-1:0.1:1, show_value = true))
+$(@bind k_slider1 PlutoUI.Slider(-1:0.1:1, show_value = true))
 "
 
-# ╔═╡ 9830f062-88ae-47f4-b021-401ffa69f423
-let
-	N = 2^8 # number of cells
-	L = 2π # domain size
-	ν = 5e-4 # viscosity
-	T = Float64 # floating point precision
-	t_max = 0.1
-	CFL = 0.25
-
-	u = u0(N, L; T) |> CircularArray
+# ╔═╡ e3314223-f671-4d61-8d4c-58086fb157a3
+function run(N; L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, i=1)
+	u = u0(N, L; T, i) |> CircularArray
 	rhs = similar(u) |> x -> fill!(x, 0) # RHS array (allocate an array like u, then rhs .= 0)
 	fK = similar(u) |> x -> fill!(x, 0) # Intercell flux array
-	x, dx = xg(N, L; T), L / N
+	dx = L / N
+	timeloop!(u, rhs, fK, ν, dx, k_slider1; t_max, CFL)
+	return u
+end
 
-	timeloop!(u, rhs, fK, ν, dx, k; t_max, CFL)
+# ╔═╡ 3d5eb2df-709c-4595-a173-500338149eec
+function plot(x, u; L=2π)
 	fig1 = plotU(x, u)
-	fig2 = plotEk(u; L)
+	fig2 = plotEk(u; L, dns_data=(k_dns, Ek_dns))
 	PlutoUI.ExperimentalLayout.vbox([fig1, fig2])
 end
+
+# ╔═╡ b6a9f4e2-5780-43ec-811f-855be3749524
+let
+	N = 2^8
+	u = run(N)
+	x = xg(N, 2π; T=eltype(u))
+	plot(x, u)
+end
+
+# ╔═╡ e51b6e28-84c8-4dd1-9e40-1fca0e665be2
+md"We see that our spectrum is very noisy compared to the DNS one. That's because the DNS spectrum is in fact an average of 512 different simulations (with different random initial conditions). So we will do the same for our large-eddy simulation (coarse DNS). Note that we pass the simulation counter `i` to be the seed of our Random number generator in the initial condition `u0(N, L; T, i)` so that each initial condition is different"
+
+# ╔═╡ 56303400-a58b-48b2-93e1-fbadfb37d308
+function run_ensemble(N, M; L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64)
+	Ek_i = zeros(T, N÷2+1, M)
+	for i in 1:M
+		u = run(N; i)
+		_, Ek = spectrum(u)
+		push!(Ek_i, Ek)
+	end
+	Ek_mean = mean(Ek_i, dims=2)[:]
+	k = rfftfreq(N, 2π / L * N)
+end
+	
 
 # ╔═╡ 88be22fb-b1bd-4727-a7e9-ce211e30929d
 html"""
@@ -618,26 +643,34 @@ TableOfContents(depth=4)
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+ADTypes = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
+AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CircularArrays = "7a955b69-7140-5f4e-a0ed-f168c5e2e749"
 Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
+ADTypes = "~1.21.0"
+AbstractFFTs = "~1.5.0"
 BenchmarkTools = "~1.6.3"
 CircularArrays = "~1.4.0"
 FFTW = "~1.10.0"
+ForwardDiff = "~1.3.2"
 GLMakie = "~0.13.8"
 JLD2 = "~0.6.3"
 LaTeXStrings = "~1.4.0"
 PlutoUI = "~0.7.79"
+Roots = "~2.2.10"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -646,7 +679,22 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.11.5"
 manifest_format = "2.0"
-project_hash = "77dc316bfac0dcb7a67f7a252b03b927021f5b72"
+project_hash = "30f12a7e7c13fd1ef7c51e908d0d87417305b87b"
+
+[[deps.ADTypes]]
+git-tree-sha1 = "f7304359109c768cf32dc5fa2d371565bb63b68a"
+uuid = "47edcb42-4c32-4615-8424-f2b9edc5f35b"
+version = "1.21.0"
+
+    [deps.ADTypes.extensions]
+    ADTypesChainRulesCoreExt = "ChainRulesCore"
+    ADTypesConstructionBaseExt = "ConstructionBase"
+    ADTypesEnzymeCoreExt = "EnzymeCore"
+
+    [deps.ADTypes.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    ConstructionBase = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
+    EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -669,6 +717,30 @@ version = "1.3.2"
 git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
 uuid = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
 version = "0.4.5"
+
+[[deps.Accessors]]
+deps = ["CompositionsBase", "ConstructionBase", "Dates", "InverseFunctions", "MacroTools"]
+git-tree-sha1 = "856ecd7cebb68e5fc87abecd2326ad59f0f911f3"
+uuid = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
+version = "0.1.43"
+
+    [deps.Accessors.extensions]
+    AxisKeysExt = "AxisKeys"
+    IntervalSetsExt = "IntervalSets"
+    LinearAlgebraExt = "LinearAlgebra"
+    StaticArraysExt = "StaticArrays"
+    StructArraysExt = "StructArrays"
+    TestExt = "Test"
+    UnitfulExt = "Unitful"
+
+    [deps.Accessors.weakdeps]
+    AxisKeys = "94b1ba4f-4ee9-5380-92f1-94cde586c3c5"
+    IntervalSets = "8197267c-284f-5f27-9208-e0e47529a953"
+    LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+    StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
+    Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+    Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
@@ -843,6 +915,17 @@ git-tree-sha1 = "37ea44092930b1811e666c3bc38065d7d87fcc74"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.13.1"
 
+[[deps.CommonSolve]]
+git-tree-sha1 = "78ea4ddbcf9c241827e7035c3a03e2e456711470"
+uuid = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
+version = "0.2.6"
+
+[[deps.CommonSubexpressions]]
+deps = ["MacroTools"]
+git-tree-sha1 = "cda2cfaebb4be89c9084adaca7dd7333369715c5"
+uuid = "bbf7d656-a473-5ed7-a52c-81e309532950"
+version = "0.3.1"
+
 [[deps.Compat]]
 deps = ["TOML", "UUIDs"]
 git-tree-sha1 = "9d8a54ce4b17aa5bdce0ea5c34bc5e7c340d16ad"
@@ -857,6 +940,15 @@ weakdeps = ["Dates", "LinearAlgebra"]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 version = "1.1.1+0"
+
+[[deps.CompositionsBase]]
+git-tree-sha1 = "802bb88cd69dfd1509f6670416bd4434015693ad"
+uuid = "a33af91c-f02d-484b-be07-31d278c5ca2b"
+version = "0.1.2"
+weakdeps = ["InverseFunctions"]
+
+    [deps.CompositionsBase.extensions]
+    CompositionsBaseInverseFunctionsExt = "InverseFunctions"
 
 [[deps.ComputePipeline]]
 deps = ["Observables", "Preferences"]
@@ -912,6 +1004,18 @@ deps = ["AdaptivePredicates", "EnumX", "ExactPredicates", "Random"]
 git-tree-sha1 = "c55f5a9fd67bdbc8e089b5a3111fe4292986a8e8"
 uuid = "927a84f5-c5f4-47a5-9785-b46e178433df"
 version = "1.6.6"
+
+[[deps.DiffResults]]
+deps = ["StaticArraysCore"]
+git-tree-sha1 = "782dd5f4561f5d267313f23853baaaa4c52ea621"
+uuid = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
+version = "1.1.0"
+
+[[deps.DiffRules]]
+deps = ["IrrationalConstants", "LogExpFunctions", "NaNMath", "Random", "SpecialFunctions"]
+git-tree-sha1 = "23163d55f885173722d1e4cf0f6110cdbaf7e272"
+uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
+version = "1.15.1"
 
 [[deps.Distributed]]
 deps = ["Random", "Serialization", "Sockets"]
@@ -1074,6 +1178,16 @@ version = "2.17.1+0"
 git-tree-sha1 = "9c68794ef81b08086aeb32eeaf33531668d5f5fc"
 uuid = "1fa38f19-a742-5d3f-a2b9-30dd87b9d5f8"
 version = "1.3.7"
+
+[[deps.ForwardDiff]]
+deps = ["CommonSubexpressions", "DiffResults", "DiffRules", "LinearAlgebra", "LogExpFunctions", "NaNMath", "Preferences", "Printf", "Random", "SpecialFunctions"]
+git-tree-sha1 = "eef4c86803f47dcb61e9b8790ecaa96956fdd8ae"
+uuid = "f6369f11-7733-5829-9624-2563aa707210"
+version = "1.3.2"
+weakdeps = ["StaticArrays"]
+
+    [deps.ForwardDiff.extensions]
+    ForwardDiffStaticArraysExt = "StaticArrays"
 
 [[deps.FreeType]]
 deps = ["CEnum", "FreeType2_jll"]
@@ -1266,14 +1380,11 @@ deps = ["Adapt", "AxisAlgorithms", "ChainRulesCore", "LinearAlgebra", "OffsetArr
 git-tree-sha1 = "65d505fa4c0d7072990d659ef3fc086eb6da8208"
 uuid = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 version = "0.16.2"
+weakdeps = ["ForwardDiff", "Unitful"]
 
     [deps.Interpolations.extensions]
     InterpolationsForwardDiffExt = "ForwardDiff"
     InterpolationsUnitfulExt = "Unitful"
-
-    [deps.Interpolations.weakdeps]
-    ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
-    Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [[deps.IntervalArithmetic]]
 deps = ["CRlibm", "MacroTools", "OpenBLASConsistentFPCSR_jll", "Printf", "Random", "RoundingEmulator"]
@@ -1608,6 +1719,12 @@ git-tree-sha1 = "cac9cc5499c25554cba55cd3c30543cff5ca4fab"
 uuid = "46d2c3a1-f734-5fdb-9937-b9b9aeba4221"
 version = "0.2.4"
 
+[[deps.NaNMath]]
+deps = ["OpenLibm_jll"]
+git-tree-sha1 = "9b8215b1ee9e78a293f99797cd31375471b2bcae"
+uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
+version = "1.1.3"
+
 [[deps.Netpbm]]
 deps = ["FileIO", "ImageCore", "ImageMetadata"]
 git-tree-sha1 = "d92b107dbb887293622df7697a2223f9f8176fcd"
@@ -1881,6 +1998,28 @@ deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "58cdd8fb2201a6267e1db87ff148dd6c1dbd8ad8"
 uuid = "f50d1b31-88e8-58de-be2c-1cc44531875f"
 version = "0.5.1+0"
+
+[[deps.Roots]]
+deps = ["Accessors", "CommonSolve", "Printf"]
+git-tree-sha1 = "8a433b1ede5e9be9a7ba5b1cc6698daa8d718f1d"
+uuid = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
+version = "2.2.10"
+
+    [deps.Roots.extensions]
+    RootsChainRulesCoreExt = "ChainRulesCore"
+    RootsForwardDiffExt = "ForwardDiff"
+    RootsIntervalRootFindingExt = "IntervalRootFinding"
+    RootsSymPyExt = "SymPy"
+    RootsSymPyPythonCallExt = "SymPyPythonCall"
+    RootsUnitfulExt = "Unitful"
+
+    [deps.Roots.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+    IntervalRootFinding = "d2bf35a9-74e0-55ec-b149-d360ff49b807"
+    SymPy = "24249f21-da20-56a4-8eb1-6a02cf4ae2e6"
+    SymPyPythonCall = "bc8888f7-b21e-4b7c-a06a-5d9c9496438c"
+    Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 
 [[deps.RoundingEmulator]]
 git-tree-sha1 = "40b9edad2e5287e05bd413a38f61a8ff55b9557b"
@@ -2459,11 +2598,12 @@ version = "1.13.0+0"
 # ╠═2ddd6297-9015-4b26-875d-09237bd51c65
 # ╠═7b16ed74-2039-4261-9aea-6db54971969a
 # ╠═8326d605-5452-4fe6-b2f3-16e6acbbeb48
-# ╠═66eebc57-5b3f-4c1e-a7bf-c107242cc1f1
+# ╟─66eebc57-5b3f-4c1e-a7bf-c107242cc1f1
 # ╠═3e684e9d-48eb-4fc7-8448-a9c5681015f3
 # ╠═5b730ef5-d5d6-419c-9f75-0c4b4bab018a
 # ╠═8cd58cda-be07-4508-919b-115b789c3e9f
 # ╟─2a1f2672-23db-4dbb-89be-7fd6ae69ac49
+# ╠═98634f8f-7d16-4460-bba3-707b4d31c6cd
 # ╠═eb8ba9fe-9852-45af-8b49-678f86ea98ee
 # ╟─bf7d1b86-bf6a-4c5d-81ff-b9d6bed9b25d
 # ╠═187aec84-7fdf-483e-b502-60b258e2ae21
@@ -2473,8 +2613,12 @@ version = "1.13.0+0"
 # ╠═6725e24d-aab5-43bb-b615-62e6522be267
 # ╠═84573f4c-1fba-4320-9c6b-fe3eb61ba2c8
 # ╠═91e0be80-d466-406d-90fe-d446b5dab172
-# ╠═f943b4af-fcda-4327-bade-d3c6cc5192ea
-# ╠═9830f062-88ae-47f4-b021-401ffa69f423
+# ╟─f943b4af-fcda-4327-bade-d3c6cc5192ea
+# ╠═e3314223-f671-4d61-8d4c-58086fb157a3
+# ╠═3d5eb2df-709c-4595-a173-500338149eec
+# ╠═b6a9f4e2-5780-43ec-811f-855be3749524
+# ╟─e51b6e28-84c8-4dd1-9e40-1fca0e665be2
+# ╠═56303400-a58b-48b2-93e1-fbadfb37d308
 # ╟─88be22fb-b1bd-4727-a7e9-ce211e30929d
 # ╟─89c19359-564a-474a-bcf7-43528e39b7a4
 # ╟─00000000-0000-0000-0000-000000000001
