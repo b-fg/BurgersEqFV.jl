@@ -19,7 +19,6 @@ end
 # ╔═╡ b933b337-8eaa-4cc5-b8d4-bfe784b8fd0a
 using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2, PlutoUI, Roots, ForwardDiff, ADTypes, AbstractFFTs
 
-
 # ╔═╡ c483b5f8-da98-43e2-9f61-f5db8e89e9cc
 md"""
 # Deriving optimal data-driven numerical schemes for implicit turbulence modelling in Julia
@@ -35,12 +34,26 @@ Julia is a programming language with the following properties
 - **Just in time** (JIT) compilation
 - **Functional language**: ecnouraging function evaluation, composability, functions as objects
 - **Multiple dispatch**: function calls based on argument types
-- **Dynamically typed**: variables can change during runtime
+- **Dynamically typed**: variable type assigned during runtime depending on its value: `a = 1` instead of `a::Int = 1`
 - **Metaprogramming**: powerful macros to generate (and avoid repeating) code
 - **Interoperability** with C, Python, R, and Fortran libraries
 - **Easy syntax**, similar to Python or Matlab
 - **Package manager** that works for real (unlike Python...)
 - **Open source** with a growing ecosystem
+
+Other properties worth noting are
+- **Arrays indexed at 1**, unlike Python or C which start at index 0
+- **Column-major ordering** on multi-dimensional arrays. So we write loops like
+```julia
+for k in 1:Nk
+	for j in 1:Nj
+		for i in 1:Ni
+			a[i, j, k] = ...
+		end
+	end
+end
+```
+- **Garbage collector** (GC), deallocations are automatically performed by the GC at the end of scope when variables are not reachable anymore
 "
 
 # ╔═╡ 64b763b5-3e17-469f-b6c5-69c109529977
@@ -57,8 +70,8 @@ We start by creating a vector of `N=10` elements with type `T=Int`
 
 # ╔═╡ d5727eea-3021-4c8f-9e15-088305ee096d
 begin
-	T = Int
 	N = 10
+	T = Int
 	a = zeros(T, N) 
 end
 
@@ -94,33 +107,60 @@ md"**Function mapping** with `map` syntax: applies a function to a *collection* 
 # ╔═╡ 9361b6d9-542a-4f18-9a40-3e0592772117
 map(i -> i * i, 1:N)
 
+# ╔═╡ 12380655-7697-49f1-8ebc-80f48d8d4bc3
+md"Here note that we have used an inlined function (or lambda function in Python): `i -> i * i`"
+
 # ╔═╡ 7a7874d3-d19e-4bd0-ab4c-bf78fad88981
-md" However, all these functions above generate a new array on the RHS eventually, thus allocating memory. Instead, if we want to assign this result to an already allocated vector `b`, we can use **in-place** element-wise operations.
+md" However, all these functions above generate a new array, thus allocating memory. Instead, if we want to assign this result to an already allocated vector `b`, we can use **in-place** element-wise operations.
 
 This can be achieved with `map!`. In Julia, functions which mutate arguments typically contain the character `!` as a warning."
 
-# ╔═╡ f4496866-a27b-4d7a-982a-f530bde2b043
-begin
+# ╔═╡ 7d91bb69-32fc-4685-ae3b-5596a6f93130
+let	
 	b = zeros(T, N)
-	@btime b .= map(i -> i * i, 1:$N) # this one allocates!
-	@btime map!(i -> i * i, $b, 1:$N) # allocation free!
-	@test all(b .== a) # check that we applied the right operation
+	map!(i -> i * i, b, 1:N)
+	b
+end
+
+# ╔═╡ 59f4fc18-1cbf-4b40-8b07-008030af1e39
+md"And we can use the `@btime` macro from `BenchmarkTools` to assess when allocations take place. In Julia, the `@` symbol is reserved for macros, which indicate that new code will be generated before compiling a statement. It's cute a way to avoid avoid repiting code. For example"
+
+# ╔═╡ b2ddfe17-5c3d-4789-ad42-9c80de25193e
+let	
+	b = zeros(T, N)
+	@btime $b .= map(i -> i * i, 1:$N) # this one allocates!
+	@btime map!(i -> i * i, $b, 1:$N) # this one does not!
+	b
+end
+
+# ╔═╡ 804f4f32-ca31-43fc-a989-42b72fc1bff0
+md"where the symbol `$` indicates a variable that will be evaluated during runtime (interpolated variable). We see that we have 0 allocations (nice!), in contrast with `map`, which generates a new array. Benchmark tools can also make a detailed analysis of the performance of a function"
+
+# ╔═╡ c7ee67f0-f464-43f2-aff9-22683b906f58
+begin
+	function slow_squares(x)
+		x2 = x * x
+		sqrt(sqrt(x2) * sqrt(x2))^2
+	end
+	function fast_squares(x)
+		x * x
+	end
+end
+
+# ╔═╡ 5d4bef09-8caa-4b38-84c6-1c74d296f519
+let
+	x = ones(1000) 
+	@benchmark slow_squares.($x)
+end
+
+# ╔═╡ 1ec6e151-c785-4f44-a3b2-24be1e934dcb
+let
+	x = ones(1000) 
+	@benchmark fast_squares.($x)
 end
 
 # ╔═╡ 7aff6f20-d270-4544-88a7-1ef035bedf13
-md"We can actually define the function, instead of using a lambda (in-line) function"
-
-# ╔═╡ 97618fbb-9b11-467f-8a63-0c93f337f4a1
-begin
-	f(i) = i * i # the array `a` is taken from global scope, not passed into `f`
-	map!(f, b, 1:N)
-end
-
-# ╔═╡ 1312e529-e56a-46e7-8ff5-130437dde938
-md"And we can also apply the broadcast directly to the function itself"
-
-# ╔═╡ 9087ebf6-a9f8-44c4-83ad-63252a4334e8
-f.(T.(1:N))
+md"Note that we have used broadcasting on the function calls itself, `f.()`, which makes the function operate element-wise on the input"
 
 # ╔═╡ ba716968-6c11-4c90-a09a-efbc94c37f6a
 md"
@@ -353,13 +393,16 @@ function δt(u, dx, ν; CFL=0.1)
 end
 
 # ╔═╡ f7ccdbff-483b-4506-ae94-0fffb38529f5
-md"###The complete space-time solver
+md"### The complete space-time solver
 
 With the semi-discrete form of the PDE arising with the FVM, and the temporal integrator, we finally have a complete solver! Let's put it together with a time loop
 "
 
 # ╔═╡ 50b6ec5f-5703-4f02-90d0-1cf65501ad26
 begin
+	energy(u) = 1/2 * sum(abs2, u) / length(u) 
+	info(i, u, dt, t) = @sprintf("ndt = %04i | dt = %.3e | t = %.3e | E = %.3e", i, dt, t, energy(u))
+	
 	function timeloop!(u, rhs, fK, ν, dx, k; t_max=0.1, CFL=0.1, verbose=true)
 		t, i = 0.0, 0
 		while t < t_max
@@ -371,8 +414,7 @@ begin
 			verbose && println(info(i, u, dt, t))
 		end
 	end
-	energy(u) = 1/2 * sum(abs2, u) / length(u)
-	info(i, u, dt, t) = @sprintf("ndt = %04i | dt = %.3e | t = %.3e | E = %.3e", i, dt, t, energy(u))
+
 end
 
 # ╔═╡ 0a18cd65-8b71-45ca-9f5e-efecdd5a9652
@@ -395,7 +437,7 @@ end
 md"Instead, we see that we cannot do this with standard arrays"
 
 # ╔═╡ 83adcff0-ec11-430b-bfd3-dc08fbc5fb41
-@error a[end+1] == a[1]
+@error a[end+1] == a[1] 
 
 # ╔═╡ a97a40e6-cc4a-4ae8-a99f-edf357bfec49
 md"#### Initial condition
@@ -576,24 +618,7 @@ md"### Running a simulation
 
 We have all we need now to run our first simulation! So let's get at it. We first define our global parameters, such as number of cells `N`, domain size `L`, viscosity $\nu$, or floating-point precision `T`. Then, we can generate an initial condition with the `u0` function, and use the `timeloop!` function to advance the solution in time.
 
-We can also play with the value $k$ of the vanLeer k-scheme, as introduced in [#Numerical-flux](#Numerical-flux).
-
-Remember that:
--  $$k=-1$$: Upwind 2nd-order
--  $$k=0$$: Fromm 2nd-order
--  $$k=1/3$$: 3rd-order
--  $$k=1/2$$: QUICK 3rd-order
--  $$k=1$$: Central 2nd-order
-"
-
-# ╔═╡ 9983affa-5365-49c0-9ede-2dcb33b40cde
-md" $k=$ $(k_slider1 = @bind k_val1 PlutoUI.Slider(-1:0.1:1, show_value=true))"
-
-# ╔═╡ f12cd093-a64c-4523-a440-b921571b8697
-md" $p=$ $(@bind p_val1 PlutoUI.Slider(6:13, show_value=true))"
-
-# ╔═╡ 556a13d8-8e82-45b0-8173-7fa12863f93d
-md" $N=2^p$"
+We can also play with the value $k$ of the vanLeer k-scheme, as introduced in [#Numerical-flux](#Numerical-flux)"
 
 # ╔═╡ e3314223-f671-4d61-8d4c-58086fb157a3
 function run(N; k=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, i=1, verbose=true)
@@ -612,6 +637,25 @@ function plot(x, u; L=2π)
 	PlutoUI.ExperimentalLayout.vbox([fig1, fig2])
 end
 
+# ╔═╡ f5efd50a-fcb1-45aa-90eb-b4230b8421ca
+md"
+Remember that:
+-  $$k=-1$$: Upwind 2nd-order
+-  $$k=0$$: Fromm 2nd-order
+-  $$k=1/3$$: 3rd-order
+-  $$k=1/2$$: QUICK 3rd-order
+-  $$k=1$$: Central 2nd-order
+"
+
+# ╔═╡ 9983affa-5365-49c0-9ede-2dcb33b40cde
+md" $k=$ $(k_slider1 = @bind k_val1 PlutoUI.Slider(-1:0.1:1, show_value=true))"
+
+# ╔═╡ f12cd093-a64c-4523-a440-b921571b8697
+md" $p=$ $(@bind p_val1 PlutoUI.Slider(6:13, show_value=true))"
+
+# ╔═╡ 556a13d8-8e82-45b0-8173-7fa12863f93d
+md" $N=2^p$"
+
 # ╔═╡ b6a9f4e2-5780-43ec-811f-855be3749524
 let
 	N = 2^p_val1
@@ -620,8 +664,14 @@ let
 	plot(x, u)
 end
 
+# ╔═╡ 3303d3fa-0371-4143-9fb4-b2c2b1059b8c
+md"We see that the more cells we use, the more resolved our discontinuities are. Also, when using central-biased schemes, if $N$ is not large enough, we observed strong oscillations of the solution near the shock, since central schemes are highly dispersive (and not dissipative). The effects is reversed with upwind schemes. Note that
+
+- **Numerical diffusion**: smoothing out solution, dampening gradients. Arises because of from even-order terms in Taylor series expansion of a derivative. In terms of fourier series, is a missmatch of the amplitude of the modes.
+- **Numerical dispersion**: oscillations in the solution, specially near sharp gradients. Arises because of from odd-order terms in Taylor series expansion of a derivative. In terms of Fourier series, is a missmatch on the phase of the modes"
+
 # ╔═╡ e51b6e28-84c8-4dd1-9e40-1fca0e665be2
-md"We see that our spectrum is very noisy compared to the DNS one. That's because the DNS spectrum is in fact an average of 512 different simulations (with different random initial conditions). So we will do the same for our large-eddy simulation (coarse DNS). Note that we pass the simulation counter `i` to be the seed of our Random number generator in the initial condition `u0(N, L; T, i)` so that each initial condition is different"
+md"We also see that our spectrum is very noisy compared to the DNS one. That's because **the DNS spectrum is in fact an average of 512 different simulations** (with different random initial conditions). So we will do the same for our large-eddy simulation (coarse DNS). Note that we pass the simulation counter `i` to be the seed of our Random number generator in the initial condition `u0(N, L; T, i)` so that each initial condition is different"
 
 # ╔═╡ 56303400-a58b-48b2-93e1-fbadfb37d308
 function run_ensemble(N, M; k=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, verbose=false)
@@ -661,6 +711,12 @@ end
 
 # ╔═╡ 5761ec37-1578-4adf-ae04-8002efe7b225
 md"We see that the more simulations we run in the ensemble, the less noisy our spectrum gets! Also not how the spectrum changes with different values of $\kappa$. Moving towards upwind scheme, $\kappa<0$, adds numerical dissipation, and the energy at small scales (high wavenumbers) gets significantly reduce. Moving towards central schemes, $\kappa>0$, makes our solution accumulate energy at small scales because the scheme produces spourious oscillations near discontinuities and there is not enough numerical dissipation to get rid of it."
+
+# ╔═╡ a3d9151f-d0b4-4c16-a38c-bd935305306c
+md"### 3. Modelling subgrid scales using numerical dissipation
+
+Subgrid-scale modelling, also know as turbulence modelling in the context of large-eddy simulation, consist in mimicking the viscous effects of the unresolved scales with either explicit terms in the RHS of the governing equations (explicit turbulence modelling), or with the numerical dissipation of our numerical schemes, known as **implicit turbulence models**
+" 
 
 # ╔═╡ 88be22fb-b1bd-4727-a7e9-ce211e30929d
 html"""
@@ -2589,12 +2645,16 @@ version = "1.13.0+0"
 # ╠═9115472d-4f45-41fc-b83d-a495a7dcfdfb
 # ╟─6dba3536-aae9-43b5-94fd-985da239580a
 # ╠═9361b6d9-542a-4f18-9a40-3e0592772117
+# ╟─12380655-7697-49f1-8ebc-80f48d8d4bc3
 # ╟─7a7874d3-d19e-4bd0-ab4c-bf78fad88981
-# ╠═f4496866-a27b-4d7a-982a-f530bde2b043
+# ╠═7d91bb69-32fc-4685-ae3b-5596a6f93130
+# ╟─59f4fc18-1cbf-4b40-8b07-008030af1e39
+# ╟─b2ddfe17-5c3d-4789-ad42-9c80de25193e
+# ╟─804f4f32-ca31-43fc-a989-42b72fc1bff0
+# ╠═c7ee67f0-f464-43f2-aff9-22683b906f58
+# ╠═5d4bef09-8caa-4b38-84c6-1c74d296f519
+# ╠═1ec6e151-c785-4f44-a3b2-24be1e934dcb
 # ╟─7aff6f20-d270-4544-88a7-1ef035bedf13
-# ╠═97618fbb-9b11-467f-8a63-0c93f337f4a1
-# ╟─1312e529-e56a-46e7-8ff5-130437dde938
-# ╠═9087ebf6-a9f8-44c4-83ad-63252a4334e8
 # ╟─ba716968-6c11-4c90-a09a-efbc94c37f6a
 # ╠═a0df8e19-7de9-48ea-9abc-f0a7bc2adb83
 # ╟─3d5e45c5-7fd0-4e24-ba8a-b498f628a074
@@ -2619,11 +2679,11 @@ version = "1.13.0+0"
 # ╟─8e2ad2d1-0d7c-44a1-95a6-1609244e525e
 # ╠═f0e04804-3014-4b93-a8dc-428c8a7087e1
 # ╟─bf3bb88e-36d2-4c64-942c-f14d13072924
-# ╠═722df141-cc69-42d7-be90-ac9edc25c0cc
+# ╟─722df141-cc69-42d7-be90-ac9edc25c0cc
 # ╠═ac2b929e-2d32-463b-ba61-75e18444c593
 # ╟─ca8e914f-09b5-4148-ac63-9938a30130fa
 # ╠═82475ecb-cdf3-496c-a52b-f98551ebff59
-# ╠═f7ccdbff-483b-4506-ae94-0fffb38529f5
+# ╟─f7ccdbff-483b-4506-ae94-0fffb38529f5
 # ╠═50b6ec5f-5703-4f02-90d0-1cf65501ad26
 # ╟─0a18cd65-8b71-45ca-9f5e-efecdd5a9652
 # ╠═c693332c-e754-4f13-a218-9616814e22be
@@ -2631,12 +2691,12 @@ version = "1.13.0+0"
 # ╠═83adcff0-ec11-430b-bfd3-dc08fbc5fb41
 # ╟─a97a40e6-cc4a-4ae8-a99f-edf357bfec49
 # ╠═fdc61704-a029-4b5f-a0eb-df77655e398b
-# ╠═cee27da9-5dfe-4ba1-b05a-66279c9ed3a3
+# ╟─cee27da9-5dfe-4ba1-b05a-66279c9ed3a3
 # ╠═2ddd6297-9015-4b26-875d-09237bd51c65
-# ╠═7b16ed74-2039-4261-9aea-6db54971969a
+# ╟─7b16ed74-2039-4261-9aea-6db54971969a
 # ╠═8326d605-5452-4fe6-b2f3-16e6acbbeb48
 # ╟─66eebc57-5b3f-4c1e-a7bf-c107242cc1f1
-# ╠═3e684e9d-48eb-4fc7-8448-a9c5681015f3
+# ╟─3e684e9d-48eb-4fc7-8448-a9c5681015f3
 # ╠═45cdb3a3-8a9e-464a-8630-75c6342686d2
 # ╠═5b730ef5-d5d6-419c-9f75-0c4b4bab018a
 # ╠═8cd58cda-be07-4508-919b-115b789c3e9f
@@ -2644,28 +2704,31 @@ version = "1.13.0+0"
 # ╠═98634f8f-7d16-4460-bba3-707b4d31c6cd
 # ╠═eb8ba9fe-9852-45af-8b49-678f86ea98ee
 # ╟─bf7d1b86-bf6a-4c5d-81ff-b9d6bed9b25d
-# ╠═187aec84-7fdf-483e-b502-60b258e2ae21
+# ╟─187aec84-7fdf-483e-b502-60b258e2ae21
 # ╠═aef3c34f-217c-40cc-8653-fda0094ea5fc
 # ╟─68cbbbc5-5137-4351-83b7-297255b139c0
 # ╠═a17118f2-6742-4c24-84ea-cb208020e91d
-# ╠═6725e24d-aab5-43bb-b615-62e6522be267
+# ╟─6725e24d-aab5-43bb-b615-62e6522be267
 # ╠═84573f4c-1fba-4320-9c6b-fe3eb61ba2c8
 # ╠═91e0be80-d466-406d-90fe-d446b5dab172
 # ╟─f943b4af-fcda-4327-bade-d3c6cc5192ea
+# ╠═e3314223-f671-4d61-8d4c-58086fb157a3
+# ╠═3d5eb2df-709c-4595-a173-500338149eec
+# ╟─f5efd50a-fcb1-45aa-90eb-b4230b8421ca
 # ╟─9983affa-5365-49c0-9ede-2dcb33b40cde
 # ╟─f12cd093-a64c-4523-a440-b921571b8697
 # ╟─556a13d8-8e82-45b0-8173-7fa12863f93d
-# ╠═e3314223-f671-4d61-8d4c-58086fb157a3
-# ╟─3d5eb2df-709c-4595-a173-500338149eec
 # ╠═b6a9f4e2-5780-43ec-811f-855be3749524
+# ╟─3303d3fa-0371-4143-9fb4-b2c2b1059b8c
 # ╟─e51b6e28-84c8-4dd1-9e40-1fca0e665be2
 # ╠═56303400-a58b-48b2-93e1-fbadfb37d308
-# ╠═5c9b6fb1-a5cd-4c38-926c-29df4e63d71f
+# ╟─5c9b6fb1-a5cd-4c38-926c-29df4e63d71f
 # ╟─5a542cae-1f3d-44df-8ca3-da4c5f8377df
-# ╠═4a4e46cd-d742-4f9a-b391-a209757bd50a
+# ╟─4a4e46cd-d742-4f9a-b391-a209757bd50a
 # ╟─6baba5db-89b3-4cd8-bc98-1f0f8ec17c32
 # ╠═4fcbf8f0-a226-4a58-8fbc-89d37641db3d
 # ╟─5761ec37-1578-4adf-ae04-8002efe7b225
+# ╠═a3d9151f-d0b4-4c16-a38c-bd935305306c
 # ╟─88be22fb-b1bd-4727-a7e9-ce211e30929d
 # ╟─89c19359-564a-474a-bcf7-43528e39b7a4
 # ╟─00000000-0000-0000-0000-000000000001
