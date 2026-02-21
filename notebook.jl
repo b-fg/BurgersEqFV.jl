@@ -171,9 +171,9 @@ Below is an example of multiple dispatch. In short, a certain function is called
 
 # ╔═╡ a0df8e19-7de9-48ea-9abc-f0a7bc2adb83
 begin
-	g(x) = println("Calling the `g` function for `Any` type")
-	g(x::Int) = println("Calling the `g` function for `Int` eletype")
-	g(x::Float64) = println("Calling the `g` function for `Float64` element type")
+	g(x) = @info("Calling the `g` function for `Any` type")
+	g(x::Int) = @info("Calling the `g` function for `Int` eletype")
+	g(x::Float64) = @info("Calling the `g` function for `Float64` element type")
 	
 	g(1)
 	g(1.0)
@@ -262,32 +262,31 @@ md"#### Numerical flux
 **Convective flux**
 
 Our next job is to define the intercell flux, aka. numerical flux, and a time-intergrator method.
-Importantly, we need the flux at the face, where a flux is $f=au$, and the wavespeed $a$ can also be a function of $u$, making the flux nonlinear as in the Burgers' equation. First, we focus on the convective flux $f_c=u^2/2$. Since we typically only have access to the cell-average value $u_i$, we first reconstruct the solution at the face $u_{i+1/2}$ and then compute the flux $f_{i+1/2}=f(u_{i+1/2})$, [''and that is the MUSCL approach''](https://doi.org/10.1016/j.jcp.2021.110640). For this, we resort to the [$k$-scheme family by Van Leer](https://en.wikipedia.org/wiki/MUSCL_scheme#Piecewise_parabolic_reconstruction), which allows for a high-order state reconstruction at the face. The left side of the face, $u^L_{i+1/2}$ and the right, $u^R_{i+1/2}$, which is written symmetrically, are given by
+Importantly, we need the flux at the face, where a flux is $f=au$, and the wavespeed $a$ can also be a function of $u$, making the flux nonlinear as in the Burgers' equation. First, we focus on the convective flux $f_c=u^2/2$. Since we typically only have access to the cell-average value $u_i$, we first reconstruct the solution at the face $u_{i+1/2}$ and then compute the flux $f_{i+1/2}=f(u_{i+1/2})$, [''and that is the MUSCL approach''](https://doi.org/10.1016/j.jcp.2021.110640). For this, we resort to the [$κ$-scheme family by Van Leer](https://en.wikipedia.org/wiki/MUSCL_scheme#Piecewise_parabolic_reconstruction), which allows for a high-order state reconstruction at the face. The left side of the face, $u^L_{i+1/2}$ and the right, $u^R_{i+1/2}$, which is written symmetrically, are given by
 
-$u^L_{i+1/2} = u_i + \dfrac{1}{4}\left[(1-k)(u_i-u_{i-1}) + (1+k)(u_{i+1}-u_i)\right]$
-$u^R_{i+1/2} = u_{i+1} + \dfrac{1}{4}\left[(1-k)(u_{i+1}-u_{i+2}) + (1+k)(u_{i}-u_{i+1})\right]$
+$u^L_{i+1/2} = u_i + \dfrac{1}{4}\left[(1-κ)(u_i-u_{i-1}) + (1+κ)(u_{i+1}-u_i)\right]$
+$u^R_{i+1/2} = u_{i+1} + \dfrac{1}{4}\left[(1-κ)(u_{i+1}-u_{i+2}) + (1+κ)(u_{i}-u_{i+1})\right]$
 
 Noting that we only need to apply it once per face, as fluxes on the face must be unique in FVM!
 "
-
 
 # ╔═╡ 321c8604-d0a9-4bff-894e-e64025499c47
 PlutoUI.Resource("https://github.com/b-fg/BurgersEqFV.jl/blob/main/img/kscheme.svg?raw=true", (:height => 	130))
 
 # ╔═╡ 7d9a98bd-e200-43f6-9acd-baa5bee15b43
-kscheme(um, ui, up, k) = ui + 1 / 4 * ((1 - k) * (ui - um) + (1 + k) * (up - ui))
+kscheme(um, ui, up, κ) = ui + 1 / 4 * ((1 - κ) * (ui - um) + (1 + κ) * (up - ui))
 
 # ╔═╡ e18166c1-5096-4d1b-9e65-562d5aca016d
 md"
-The $k$-scheme provides a tunable parameter, $k$, which can result in the following reconsuctrions:
+The $κ$-scheme provides a tunable parameter, $κ$, which can result in the following reconsuctrions:
 
--  $$k=-1$$: Upwind 2nd-order
--  $$k=0$$: Fromm 2nd-order
--  $$k=1/3$$: 3rd-order
--  $$k=1/2$$: QUICK 3rd-order
--  $$k=1$$: Central 2nd-order
+-  $$κ=-1$$: Upwind 2nd-order
+-  $$κ=0$$: Fromm 2nd-order
+-  $$κ=1/3$$: 3rd-order
+-  $$κ=1/2$$: QUICK 3rd-order
+-  $$κ=1$$: Central 2nd-order
 
-Note that the scheme goes from being fully upwind (-1) to fully central (1). Values of $k<-1$ and $k>1$ are allowed, and they bias the reconstruction even more to the upwind and downwind directions, respectively."
+Note that the scheme goes from being fully upwind (-1) to fully central (1). Values of $κ<-1$ and $κ>1$ are allowed, and they bias the reconstruction even more to the upwind and downwind directions, respectively."
 
 # ╔═╡ 02e1a59c-c747-4bf0-93a8-074ea7f88f9b
 md"Next, after computing $u_L$ and $u_R$, we need to define how the intercell flux will be computed. Note that this numerical flux is unique to each face! That is $f_{i+1/2} = -f_{(i+1)-1/2}$.
@@ -303,9 +302,9 @@ Let's define the function for computing the convective flux using the Rusanov sc
 flux(u) = u * u / 2
 
 # ╔═╡ f1bcffa8-f632-445c-bbe6-3949bfec22ba
-function f_conv(um, ui, up, upp, k) # k-scheme + Rusanov
-	uL = kscheme(um, ui, up, k)
-	uR = kscheme(upp, up, ui, k)
+function f_conv(um, ui, up, upp, κ) # k-scheme + Rusanov
+	uL = kscheme(um, ui, up, κ)
+	uR = kscheme(upp, up, ui, κ)
 	1 / 2 * (flux(uL) + flux(uR)) - 1 / 2 * (uR - uL) * max(abs(uL), abs(uR))
 end
 
@@ -340,11 +339,11 @@ md"#### Semi-discrete final form
 Adding the convective flux (`f_conv`) and the dissipative flux (`f_diss`) will provide us with the full RHS of the original PDE. As noted, the only variables needed are the discrete solution $u_i$, viscosity $\nu$, cell size $δx$, and $k$ value for the face-reconstruction scheme. In functional form"
 
 # ╔═╡ f0e04804-3014-4b93-a8dc-428c8a7087e1
-function dudt!(rhs, ui, fK, ν, dx, k)
-	um, up, upp, fKm = @views ui[0:end-1], ui[2:end+1], ui[3:end+2], fK[0:end-1]
+function dudt!(rhs, ui, f_num, ν, dx, κ)
+	um, up, upp, f_numm = @views ui[0:end-1], ui[2:end+1], ui[3:end+2], f_num[0:end-1]
 
-    @. fK = f_conv(um, ui, up, upp, k) - f_diss(ui, up, ν, dx)
-    @. rhs = -(fK - fKm) / dx
+    @. f_num = f_conv(um, ui, up, upp, κ) - f_diss(ui, up, ν, dx)
+    @. rhs = -(f_num - f_numm) / dx
 end
 
 # ╔═╡ bf3bb88e-36d2-4c64-942c-f14d13072924
@@ -353,7 +352,7 @@ Here we used a few syntax conventions and helpers here:
 - `u` is a 1D array (`Vector`) storing the solution, and `fK` is the vector storing the numerical flux at the face. Since we have a periodic domain, `length(u)==length(fK)`
 - `rhs` is the vector storing the RHS values, and we have named the function `dudt!` indicating with `!` that the content of `rhs` is going to be modified in this function
 - `@views` provide a view into a specific slice of an array without allocating new memory. For example, `ui[i+1] == up[i]`, and `ui[i+1] - ui[i]` becomes just `up[i] - ui[i]`
-- This allows to use broadcasting more efficiently. The `@.` syntax indicates that a macro called `@.` will expand every operator in that line of code from a scalar to a vector operation, that is$br `@. fK = f_conv(um, ui, up, upp, k) - f_diss(um, ui, up, ν, dx)` $br becomes $br `fK .= f_conv.(um, ui, up, upp, k) .- f_diss.(um, ui, up, ν, dx)` $br so we do not need to write all the dots in this way (the macro will generate it for us before compilation).
+- This allows to use broadcasting more efficiently. The `@.` syntax indicates that a macro called `@.` will expand every operator in that line of code from a scalar to a vector operation, that is$br `@. f_num = f_conv(um, ui, up, upp, κ) - f_diss(um, ui, up, ν, dx)` $br becomes $br `f_num .= f_conv.(um, ui, up, upp, κ) .- f_diss.(um, ui, up, ν, dx)` $br so we do not need to write all the dots in this way (the macro will generate it for us before compilation).
 "
 
 # ╔═╡ 722df141-cc69-42d7-be90-ac9edc25c0cc
@@ -403,18 +402,17 @@ begin
 	energy(u) = 1/2 * sum(abs2, u) / length(u) 
 	info(i, u, dt, t) = @sprintf("ndt = %04i | dt = %.3e | t = %.3e | E = %.3e", i, dt, t, energy(u))
 	
-	function timeloop!(u, rhs, fK, ν, dx, k; t_max=0.1, CFL=0.1, verbose=true)
+	function timeloop!(u, rhs, f_num, ν, dx, κ; t_max=0.1, CFL=0.1, verbose=true)
 		t, i = 0.0, 0
 		while t < t_max
-			dudt!(rhs, u, fK, ν, dx, k)
+			dudt!(rhs, u, f_num, ν, dx, κ)
 			dt = δt(u, dx, ν; CFL)
 			stepEuler!(u, rhs, dt)
 			t += dt
 			i += 1
-			verbose && println(info(i, u, dt, t))
+			verbose && @info(info(i, u, dt, t))
 		end
 	end
-
 end
 
 # ╔═╡ 0a18cd65-8b71-45ca-9f5e-efecdd5a9652
@@ -437,24 +435,24 @@ end
 md"Instead, we see that we cannot do this with standard arrays"
 
 # ╔═╡ 83adcff0-ec11-430b-bfd3-dc08fbc5fb41
-@error a[end+1] == a[1] 
+a[end+1] == a[1] 
 
 # ╔═╡ a97a40e6-cc4a-4ae8-a99f-edf357bfec49
 md"#### Initial condition
 
-Instead of considering the initial condition for $u_i$, we set an initial condition for the **energy spectrum** of $u_i$. That is, we set an analytical function for $\hat{E}(\kappa)$, ie. the energy content of $u_i$ in Fourier space ($\kappa$). The analytical function for $\hat{E}(\kappa)$ is
+Instead of considering the initial condition for $u_i$, we set an initial condition for the **energy spectrum** of $u_i$. That is, we set an analytical function for $\hat{E}(k)$, ie. the energy content of $u_i$ in Fourier space ($k$). The analytical function for $\hat{E}(\kappa)$ is
 
-$\hat{E}(\kappa) = A^4\kappa^4e^{-(\kappa/\kappa_0)^2}$
+$\hat{E}(k) = A^4k^4e^{-(k/k_0)^2}$
 
-where $A$ is a constant set as $A=2k_0^{-5}/(3\sqrt{\pi})$ so that $\int_0^\infty\hat{E}(\kappa)\mathrm{d}\kappa=1/2$. Here $\kappa_0$ is the wavenumber at which we want the energy to peak, and we select $\kappa_0=10$.
+where $A$ is a constant set as $A=2k_0^{-5}/(3\sqrt{\pi})$ so that $\int_0^\infty\hat{E}(k)\mathrm{d}k=1/2$. Here $k_0$ is the wavenumber at which we want the energy to peak, and we select $k_0=10$.
 
-The mode amplitude of the initial condition at each wavenumber is $|\hat{u}(\kappa)|=\sqrt{2\hat{E}(\kappa)}$ (ie. the amplitude of harmonic functions of course). So we find each mode amplitude and frequency with
+The mode amplitude of the initial condition at each wavenumber is $|\hat{u}(k)|=\sqrt{2\hat{E}(k)}$ (ie. the amplitude of harmonic functions of course). So we find each mode amplitude and frequency with
 
-$\hat{u}(\kappa)=\sqrt{2\hat{E}(\kappa)}e^{i2\pi R(\kappa)}$
+$\hat{u}(k)=\sqrt{2\hat{E}(k)}e^{i2\pi R(k)}$
 
-where $e^{i2\pi R(\kappa)}$ sets a random phase $(0,2\pi)$ for each wavenumber through the random uniform sampler $R(\kappa)\in[0,1]$.
+where $e^{i2\pi R(k)}$ sets a random phase $(0,2\pi)$ for each wavenumber through the random uniform sampler $R(k)\in[0,1]$.
 
-Finally, we need to transform back our initial condition from Fourier space, $\hat{u}_i(\kappa,0)$ to physical space $u_i(x,0)$ using the inverse Fast Fourier Transfrom (FFT).
+Finally, we need to transform back our initial condition from Fourier space, $\hat{u}_i(k,0)$ to physical space $u_i(x,0)$ using the inverse Fast Fourier Transfrom (FFT).
 
 Let's code it up!
 "
@@ -476,11 +474,12 @@ end
 md"Now we check that our implementation is correct"
 
 # ╔═╡ 2ddd6297-9015-4b26-875d-09237bd51c65
-begin # Check E=1/2
-	u_IC = u0(64, 2π)
+let # Check E=1/2
+	N, L = 64, 2π
+	u_IC = u0(N, L) # as N increases, we get closer to the E=0.5 value
 	E = energy(u_IC)
-	println("E = $E")
-	@test isapprox(energy(u_IC), 1/2; rtol=0.1)
+	@info("E = $E")
+	@test isapprox(E, 1/2; rtol=1/100)
 end
 
 # ╔═╡ 7b16ed74-2039-4261-9aea-6db54971969a
@@ -504,8 +503,8 @@ end
 # ╔═╡ 66eebc57-5b3f-4c1e-a7bf-c107242cc1f1
 begin # Just some options for making the plots more beautiful
 	my_Ek_axis_props = (
-		xlabel = L"$\kappa$",
-		ylabel = L"$E(\kappa)$",
+		xlabel = L"$k$",
+		ylabel = L"$\hat{E}$",
         xscale = log10,
         yscale = log10,
         limits = (1, 1e4, 1e-11, 1e-1),
@@ -541,7 +540,7 @@ begin # Just some options for making the plots more beautiful
 end;
 
 # ╔═╡ 3e684e9d-48eb-4fc7-8448-a9c5681015f3
-md"And then we define the plotting function using [Makie](https://docs.makie.org/stable/). Note that some plotting parameters are hidden in the previous cell because they are not important. Also the function to get data already generated is hidden there."
+md"And then we define the plotting function using [Makie](https://docs.makie.org/stable/). Note that some plotting parameters are hidden in the previous cell because they are not important. Also the function to get DNS data already generated is hidden there."
 
 # ╔═╡ 45cdb3a3-8a9e-464a-8630-75c6342686d2
 function plotEk(u; L=2π, dns_data=nothing)
@@ -621,12 +620,12 @@ We have all we need now to run our first simulation! So let's get at it. We firs
 We can also play with the value $k$ of the vanLeer k-scheme, as introduced in [#Numerical-flux](#Numerical-flux)"
 
 # ╔═╡ e3314223-f671-4d61-8d4c-58086fb157a3
-function run(N; k=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, i=1, verbose=true)
+function run(N; κ=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, i=1, verbose=true)
 	u = u0(N, L; T, i) |> CircularArray
 	rhs = similar(u) |> x -> fill!(x, 0) # RHS array (allocate an array like u, then rhs .= 0)
 	fK = similar(u) |> x -> fill!(x, 0) # Intercell flux array
 	dx = L / N
-	timeloop!(u, rhs, fK, ν, dx, k; t_max, CFL, verbose)
+	timeloop!(u, rhs, fK, ν, dx, κ; t_max, CFL, verbose)
 	return u
 end
 
@@ -640,15 +639,15 @@ end
 # ╔═╡ f5efd50a-fcb1-45aa-90eb-b4230b8421ca
 md"
 Remember that:
--  $$k=-1$$: Upwind 2nd-order
--  $$k=0$$: Fromm 2nd-order
--  $$k=1/3$$: 3rd-order
--  $$k=1/2$$: QUICK 3rd-order
--  $$k=1$$: Central 2nd-order
+-  $$\kappa=-1$$: Upwind 2nd-order
+-  $$\kappa=0$$: Fromm 2nd-order
+-  $$\kappa=1/3$$: 3rd-order
+-  $$\kappa=1/2$$: QUICK 3rd-order
+-  $$\kappa=1$$: Central 2nd-order
 "
 
 # ╔═╡ 9983affa-5365-49c0-9ede-2dcb33b40cde
-md" $k=$ $(k_slider1 = @bind k_val1 PlutoUI.Slider(-1:0.1:1, show_value=true))"
+md" $\kappa=$ $(κ_slider1 = @bind κ_val1 PlutoUI.Slider(-1:0.1:1, show_value=true))"
 
 # ╔═╡ f12cd093-a64c-4523-a440-b921571b8697
 md" $p=$ $(@bind p_val1 PlutoUI.Slider(6:13, show_value=true))"
@@ -659,7 +658,7 @@ md" $N=2^p$"
 # ╔═╡ b6a9f4e2-5780-43ec-811f-855be3749524
 let
 	N = 2^p_val1
-	u = run(N; k=k_val1)
+	u = run(N; κ=κ_val1)
 	x = xg(N, 2π; T=eltype(u))
 	plot(x, u)
 end
@@ -673,14 +672,14 @@ md"We see that the more cells we use, the more resolved our discontinuities are.
 # ╔═╡ e51b6e28-84c8-4dd1-9e40-1fca0e665be2
 md"We also see that our spectrum is very noisy compared to the DNS one. That's because **the DNS spectrum is in fact an average of 512 different simulations** (with different random initial conditions). So we will do the same for our large-eddy simulation (coarse DNS). Note that we pass the simulation counter `i` to be the seed of our Random number generator in the initial condition `u0(N, L; T, i)` so that each initial condition is different and then we average the spectrums
 
-$\bar{E}(k) = \frac{1}{M}\sum_{i=1}^{M}E_i(k)$
+$\bar{\hat{E}}(k) = \frac{1}{M}\sum_{i=1}^{M}\hat{E}_i(k)$
 "
 
 # ╔═╡ 56303400-a58b-48b2-93e1-fbadfb37d308
-function run_ensemble(N, M; k=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, verbose=false)
+function run_ensemble(N, M; κ=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, verbose=false)
 	Ek_i, u = zeros(T, N÷2+1, M), nothing
 	for i in 1:M
-		u = run(N; k, i, verbose)
+		u = run(N; κ, i, verbose)
 		_, Ek = spectrum(u)
 		Ek_i[:, i] .= Ek
 	end
@@ -692,7 +691,7 @@ end
 md" $M=$ $(@bind M_val PlutoUI.Slider(1:32, show_value=true))"
 
 # ╔═╡ 5a542cae-1f3d-44df-8ca3-da4c5f8377df
-md" $k=$ $(k_slider2 = @bind k_val2 PlutoUI.Slider(-1:0.1:1, show_value=true))"
+md" $\kappa=$ $(κ_slider2 = @bind κ_val2 PlutoUI.Slider(-1:0.1:1, show_value=true))"
 
 # ╔═╡ 4a4e46cd-d742-4f9a-b391-a209757bd50a
 md" $p=$ $(@bind p_val2 PlutoUI.Slider(6:12, show_value=true))"
@@ -707,7 +706,7 @@ let
 	M = M_val
 	N = 2^p_val2
 	L = 2π
-	u, Ek_mean = run_ensemble(N, M_val; k=k_val2)
+	u, Ek_mean = run_ensemble(N, M_val; κ=κ_val2)
 	k = rfftfreq(N, 2π / L * N)
 	plotEk(k, Ek_mean; L, dns_data=(k_dns, Ek_dns))
 end
@@ -2680,7 +2679,7 @@ version = "1.13.0+0"
 # ╟─7a7874d3-d19e-4bd0-ab4c-bf78fad88981
 # ╠═7d91bb69-32fc-4685-ae3b-5596a6f93130
 # ╟─59f4fc18-1cbf-4b40-8b07-008030af1e39
-# ╟─b2ddfe17-5c3d-4789-ad42-9c80de25193e
+# ╠═b2ddfe17-5c3d-4789-ad42-9c80de25193e
 # ╟─804f4f32-ca31-43fc-a989-42b72fc1bff0
 # ╠═c7ee67f0-f464-43f2-aff9-22683b906f58
 # ╠═5d4bef09-8caa-4b38-84c6-1c74d296f519
@@ -2697,7 +2696,7 @@ version = "1.13.0+0"
 # ╟─44d5b669-03f9-43b7-8248-6b4cfc2f8985
 # ╟─15283d9e-cb12-4626-88ca-be7380acb5a6
 # ╟─b022fe41-000e-440a-9ef9-28697fdb6d72
-# ╠═8f324c5d-5a5d-404e-92de-9c4a0aa79397
+# ╟─8f324c5d-5a5d-404e-92de-9c4a0aa79397
 # ╟─321c8604-d0a9-4bff-894e-e64025499c47
 # ╠═7d9a98bd-e200-43f6-9acd-baa5bee15b43
 # ╟─e18166c1-5096-4d1b-9e65-562d5aca016d
@@ -2745,23 +2744,23 @@ version = "1.13.0+0"
 # ╟─f943b4af-fcda-4327-bade-d3c6cc5192ea
 # ╠═e3314223-f671-4d61-8d4c-58086fb157a3
 # ╠═3d5eb2df-709c-4595-a173-500338149eec
-# ╟─f5efd50a-fcb1-45aa-90eb-b4230b8421ca
+# ╠═f5efd50a-fcb1-45aa-90eb-b4230b8421ca
 # ╟─9983affa-5365-49c0-9ede-2dcb33b40cde
 # ╟─f12cd093-a64c-4523-a440-b921571b8697
 # ╟─556a13d8-8e82-45b0-8173-7fa12863f93d
 # ╠═b6a9f4e2-5780-43ec-811f-855be3749524
 # ╟─3303d3fa-0371-4143-9fb4-b2c2b1059b8c
 # ╟─e51b6e28-84c8-4dd1-9e40-1fca0e665be2
-# ╟─56303400-a58b-48b2-93e1-fbadfb37d308
+# ╠═56303400-a58b-48b2-93e1-fbadfb37d308
 # ╟─5c9b6fb1-a5cd-4c38-926c-29df4e63d71f
 # ╟─5a542cae-1f3d-44df-8ca3-da4c5f8377df
 # ╟─4a4e46cd-d742-4f9a-b391-a209757bd50a
 # ╟─6baba5db-89b3-4cd8-bc98-1f0f8ec17c32
 # ╠═4fcbf8f0-a226-4a58-8fbc-89d37641db3d
 # ╟─5761ec37-1578-4adf-ae04-8002efe7b225
-# ╠═a3d9151f-d0b4-4c16-a38c-bd935305306c
+# ╟─a3d9151f-d0b4-4c16-a38c-bd935305306c
 # ╟─e3bd6016-4455-4bb6-8c55-966d3ed0ae0d
-# ╠═b27c89c7-6f0b-4974-9e35-9323de822d78
+# ╟─b27c89c7-6f0b-4974-9e35-9323de822d78
 # ╠═f508364a-03b4-439d-a6e1-b611f802d0b5
 # ╟─88be22fb-b1bd-4727-a7e9-ce211e30929d
 # ╟─89c19359-564a-474a-bcf7-43528e39b7a4
