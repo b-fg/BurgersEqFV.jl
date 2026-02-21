@@ -560,7 +560,7 @@ function plotEk(k, Ek; L=2π, dns_data=nothing)
 
 	if !isnothing(dns_data)
 		k_DNS, Ek_DNS = dns_data
-		lines!(ax, k_DNS, Ek_DNS, label=L"DNS ($N=2^{13}$), $t=0.1$", color=:black) # E(k) plot from DNS data
+		lines!(ax, k_DNS, Ek_DNS, label=L"DNS ($N=2^{13}$)", color=:black) # E(k) plot from DNS data
 	end
 	
 	axislegend(ax, position=:rt, framewidth=0.1, alpha=0.1) # add legend
@@ -671,7 +671,10 @@ md"We see that the more cells we use, the more resolved our discontinuities are.
 - **Numerical dispersion**: oscillations in the solution, specially near sharp gradients. Arises because of from odd-order terms in Taylor series expansion of a derivative. In terms of Fourier series, is a missmatch on the phase of the modes"
 
 # ╔═╡ e51b6e28-84c8-4dd1-9e40-1fca0e665be2
-md"We also see that our spectrum is very noisy compared to the DNS one. That's because **the DNS spectrum is in fact an average of 512 different simulations** (with different random initial conditions). So we will do the same for our large-eddy simulation (coarse DNS). Note that we pass the simulation counter `i` to be the seed of our Random number generator in the initial condition `u0(N, L; T, i)` so that each initial condition is different"
+md"We also see that our spectrum is very noisy compared to the DNS one. That's because **the DNS spectrum is in fact an average of 512 different simulations** (with different random initial conditions). So we will do the same for our large-eddy simulation (coarse DNS). Note that we pass the simulation counter `i` to be the seed of our Random number generator in the initial condition `u0(N, L; T, i)` so that each initial condition is different and then we average the spectrums
+
+$\bar{E}(k) = \frac{1}{M}\sum_{i=1}^{M}E_i(k)$
+"
 
 # ╔═╡ 56303400-a58b-48b2-93e1-fbadfb37d308
 function run_ensemble(N, M; k=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, verbose=false)
@@ -713,10 +716,38 @@ end
 md"We see that the more simulations we run in the ensemble, the less noisy our spectrum gets! Also not how the spectrum changes with different values of $\kappa$. Moving towards upwind scheme, $\kappa<0$, adds numerical dissipation, and the energy at small scales (high wavenumbers) gets significantly reduce. Moving towards central schemes, $\kappa>0$, makes our solution accumulate energy at small scales because the scheme produces spourious oscillations near discontinuities and there is not enough numerical dissipation to get rid of it."
 
 # ╔═╡ a3d9151f-d0b4-4c16-a38c-bd935305306c
-md"### 3. Modelling subgrid scales using numerical dissipation
+md"## 3. Modelling subgrid scales using numerical dissipation
 
-Subgrid-scale modelling, also know as turbulence modelling in the context of large-eddy simulation, consist in mimicking the viscous effects of the unresolved scales with either explicit terms in the RHS of the governing equations (explicit turbulence modelling), or with the numerical dissipation of our numerical schemes, known as **implicit turbulence models**
+Subgrid-scale modelling, also know as turbulence modelling in the context of large-eddy simulation, consist in mimicking the viscous effects of the unresolved scales with either an explicit term in the RHS of the governing equation (explicit turbulence modelling), or with the numerical dissipation of our numerical schemes, known as **implicit turbulence models**.
+
+This part of the tutorial focuses on **finding the best face-reconstruction scheme for a given grid resolution using an optimization approach**.
+
+Implicit LES models are not tunned for a particular resolution, and instead rely on the fact that numerical dissipation reduces as grid resolution increases. However, this does not offer a tunnable turbulence model once a numerical scheme is selected. In contrast, explicit LES models can tune added dissipation by adjusting certain coefficients in the model. _Can we do the same for implicit LES?_
 " 
+
+# ╔═╡ e3bd6016-4455-4bb6-8c55-966d3ed0ae0d
+md" To solve this optimization problem we need the following ingredients
+
+1. Select the parameter we are going to optimize
+1. Define an error metric, aka. loss, to optimize for
+1. Compute the gradient of our loss wrt. to the tunable parameter
+1. Update the parameter using the gradient information"
+
+# ╔═╡ b27c89c7-6f0b-4974-9e35-9323de822d78
+md"### Select the tunable parameter
+
+As you may have guessed, we are going to find the optimal $\kappa$ values of the van Leer $\kappa$-scheme, ie. our face-reconstruction scheme, which we can recall
+
+$u^L_{i+1/2} = u_i + \dfrac{1}{4}\left[(1-\kappa)(u_i-u_{i-1}) + (1+\kappa)(u_{i+1}-u_i)\right]$
+
+This is why we have constructed our solver so that $\kappa$ is an input parameter of
+	
+`run_ensemble(κ) → run(κ) → timeloop!(κ) → dudt!(κ) → f_conv(κ) → kscheme(κ)`
+
+"
+
+# ╔═╡ f508364a-03b4-439d-a6e1-b611f802d0b5
+md"### Define an error metric"
 
 # ╔═╡ 88be22fb-b1bd-4727-a7e9-ce211e30929d
 html"""
@@ -2666,10 +2697,10 @@ version = "1.13.0+0"
 # ╟─44d5b669-03f9-43b7-8248-6b4cfc2f8985
 # ╟─15283d9e-cb12-4626-88ca-be7380acb5a6
 # ╟─b022fe41-000e-440a-9ef9-28697fdb6d72
-# ╟─8f324c5d-5a5d-404e-92de-9c4a0aa79397
+# ╠═8f324c5d-5a5d-404e-92de-9c4a0aa79397
 # ╟─321c8604-d0a9-4bff-894e-e64025499c47
 # ╠═7d9a98bd-e200-43f6-9acd-baa5bee15b43
-# ╠═e18166c1-5096-4d1b-9e65-562d5aca016d
+# ╟─e18166c1-5096-4d1b-9e65-562d5aca016d
 # ╟─02e1a59c-c747-4bf0-93a8-074ea7f88f9b
 # ╠═e4327a21-904b-4bab-9179-442dea00dda5
 # ╠═f1bcffa8-f632-445c-bbe6-3949bfec22ba
@@ -2721,7 +2752,7 @@ version = "1.13.0+0"
 # ╠═b6a9f4e2-5780-43ec-811f-855be3749524
 # ╟─3303d3fa-0371-4143-9fb4-b2c2b1059b8c
 # ╟─e51b6e28-84c8-4dd1-9e40-1fca0e665be2
-# ╠═56303400-a58b-48b2-93e1-fbadfb37d308
+# ╟─56303400-a58b-48b2-93e1-fbadfb37d308
 # ╟─5c9b6fb1-a5cd-4c38-926c-29df4e63d71f
 # ╟─5a542cae-1f3d-44df-8ca3-da4c5f8377df
 # ╟─4a4e46cd-d742-4f9a-b391-a209757bd50a
@@ -2729,6 +2760,9 @@ version = "1.13.0+0"
 # ╠═4fcbf8f0-a226-4a58-8fbc-89d37641db3d
 # ╟─5761ec37-1578-4adf-ae04-8002efe7b225
 # ╠═a3d9151f-d0b4-4c16-a38c-bd935305306c
+# ╟─e3bd6016-4455-4bb6-8c55-966d3ed0ae0d
+# ╠═b27c89c7-6f0b-4974-9e35-9323de822d78
+# ╠═f508364a-03b4-439d-a6e1-b611f802d0b5
 # ╟─88be22fb-b1bd-4727-a7e9-ce211e30929d
 # ╟─89c19359-564a-474a-bcf7-43528e39b7a4
 # ╟─00000000-0000-0000-0000-000000000001
