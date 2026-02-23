@@ -28,11 +28,11 @@ md"""
 md"
 ## 1. Introduction to Julia
 
-Julia is a programming language with the following properties
+[Julia](https://julialang.org/) is a programming language with the following properties
 
 - **Compiled** via LLVM (fast!)
 - **Just in time** (JIT) compilation
-- **Functional language**: ecnouraging function evaluation, composability, functions as objects
+- **Functional language**: encouraging function evaluation, composability, functions as objects
 - **Multiple dispatch**: function calls based on argument types
 - **Dynamically typed**: variable type assigned during runtime depending on its value: `a = 1` instead of `a::Int = 1`
 - **Metaprogramming**: powerful macros to generate (and avoid repeating) code
@@ -59,12 +59,12 @@ end
 # ╔═╡ 64b763b5-3e17-469f-b6c5-69c109529977
 md"### Julia basics
 
-Before we start, let's load libraries that we will use throughout the tutotial"
+Before we start, let's load libraries that we will use throughout the tutorial"
 
 # ╔═╡ 96bd941b-05b7-4c2c-b91f-4d4df0166bc7
 md"#### Applying functions to vectors
 
-Let's take a look at basic Julia sintax!
+Let's take a look at basic Julia syntax!
 We start by creating a vector of `N=10` elements with type `T=Int`
 "
 
@@ -72,22 +72,22 @@ We start by creating a vector of `N=10` elements with type `T=Int`
 begin
 	N = 10
 	T = Int
-	a = zeros(T, N) 
+	a = zeros(T, N)
 end
 
 # ╔═╡ 6e5ef939-ea32-482f-9a2b-ca2cfb8b67b9
-md"And now we loop through it to operate element-wise"
+md"And we loop through it to operate element-wise"
 
 # ╔═╡ 4cd1ea7f-331b-4b3c-a280-2041de98af2e
 let
-	for i in eachindex(a) # even better use `eachindex(a)` instead of `1:N`
+	for i in eachindex(a) # also `1:N` but can be out of bounds if not careful
 		a[i] = i * i
 	end
 	a
 end
 
 # ╔═╡ 7ed11855-7609-4c4e-b101-a80c650f243d
-md"We can also use broadcasting, array comprehension, or function mapping to do the same element-wise operation!
+md"_We can also use **broadcasting, array comprehension, or function mapping** to do the same element-wise operation_
 
 **Broadcasting** with dot `.` syntax
 "
@@ -116,25 +116,27 @@ md" However, all these functions above generate a new array, thus allocating mem
 This can be achieved with `map!`. In Julia, functions which mutate arguments typically contain the character `!` as a warning."
 
 # ╔═╡ 7d91bb69-32fc-4685-ae3b-5596a6f93130
-let	
+let
 	b = zeros(T, N)
 	map!(i -> i * i, b, 1:N)
 	b
 end
 
 # ╔═╡ 59f4fc18-1cbf-4b40-8b07-008030af1e39
-md"And we can use the `@btime` macro from `BenchmarkTools` to assess when allocations take place. In Julia, the `@` symbol is reserved for macros, which indicate that new code will be generated before compiling a statement. It's cute a way to avoid avoid repiting code. For example"
+md"And we can use the `@btime` macro from `BenchmarkTools` to assess when allocations take place. In Julia, the `@` symbol is reserved for macros, which indicate that new code will be generated before compiling a statement. It's cute a way to avoid repeating code. For example"
 
 # ╔═╡ b2ddfe17-5c3d-4789-ad42-9c80de25193e
-let	
+let
 	b = zeros(T, N)
-	@btime $b .= map(i -> i * i, 1:$N) # this one allocates!
-	@btime map!(i -> i * i, $b, 1:$N) # this one does not!
+	@btime $b .= map(i -> i * i, 1:$N) # this one allocates one new array, then assigns to b
+	@btime map!(i -> i * i, $b, 1:$N) # this one does not allocate a new array
 	b
 end
 
 # ╔═╡ 804f4f32-ca31-43fc-a989-42b72fc1bff0
-md"where the symbol `$` indicates a variable that will be evaluated during runtime (interpolated variable). We see that we have 0 allocations (nice!), in contrast with `map`, which generates a new array. Benchmark tools can also make a detailed analysis of the performance of a function"
+md"where the symbol `$` indicates a variable that will be evaluated during runtime (interpolated variable). We see that we have 0 allocations (nice!), in contrast with `map`, which generates a new array. Benchmark tools can also make a detailed analysis of the performance of a function.
+
+For example"
 
 # ╔═╡ c7ee67f0-f464-43f2-aff9-22683b906f58
 begin
@@ -149,18 +151,18 @@ end
 
 # ╔═╡ 5d4bef09-8caa-4b38-84c6-1c74d296f519
 let
-	x = ones(1000) 
-	@benchmark slow_squares.($x)
+	x = ones(1000)
+	@benchmark slow_squares.(ones(1000))
 end
 
 # ╔═╡ 1ec6e151-c785-4f44-a3b2-24be1e934dcb
 let
-	x = ones(1000) 
+	x = ones(1000)
 	@benchmark fast_squares.($x)
 end
 
 # ╔═╡ 7aff6f20-d270-4544-88a7-1ef035bedf13
-md"Note that we have used broadcasting on the function calls itself, `f.()`, which makes the function operate element-wise on the input"
+md"This analysis indicates that `fast_squares` median evaluation is 3 to 4 times faster than `slow_squares`. Note also that we have used broadcasting on the function call itself, `f.()`, which makes the function operate element-wise on the input."
 
 # ╔═╡ ba716968-6c11-4c90-a09a-efbc94c37f6a
 md"
@@ -172,17 +174,33 @@ Below is an example of multiple dispatch. In short, a certain function is called
 # ╔═╡ a0df8e19-7de9-48ea-9abc-f0a7bc2adb83
 begin
 	g(x) = @info("Calling the `g` function for `Any` type")
-	g(x::Int) = @info("Calling the `g` function for `Int` eletype")
-	g(x::Float64) = @info("Calling the `g` function for `Float64` element type")
-	
-	g(1)
-	g(1.0)
-	g("Hi")
+	g(x::Int64) = @info("Calling the `g` function for `Int64` type")
+	g(x::Float64) = @info("Calling the `g` function for `Float64` type")
+
+	g(1) # Int64
+	g(1.0) # Float64
+	g("Hi") # String
 	g(g) # functions are objects of type `Function`!
+	@info typeof(g)
+end
+
+# ╔═╡ 6746096e-8948-498f-a341-534b88ec6c17
+md"In Julia, we have a hierarchy made of primitive (`Float32`, `Int64`, `Bool`, ...) and abstract types (`AbstractFloat`, `Number`, ...) , and this can be used for multiple dispatch as well. For example" 
+
+# ╔═╡ cde04a91-f1d1-4ad8-b06b-99fb845a48be
+begin
+	h(x::Number) = @info("Calling the `g` function for a `Number` type")
+	h(x::Float32) = @info("Calling the `g` function for `Float32` type")
+
+	h(1) # Int64
+	h(1f0) # Float32
+	h(1//2) # Rational number
+
+	@test Float32 <: AbstractFloat <: Number <: Any
 end
 
 # ╔═╡ 3d5e45c5-7fd0-4e24-ba8a-b498f628a074
-md"And we can degine our own custom type using `Structs`. For example"
+md"We can define our own custom types using `Struct`. For example"
 
 # ╔═╡ f5e58ad0-6998-4eb3-ade7-b4d70b4374df
 begin
@@ -216,29 +234,29 @@ area(ones(N))
 # ╔═╡ 19a15fe3-63c6-405c-8d2e-5e25816608ab
 md"
 ## 2. The 1D viscous Burgers' equation
-The [viscous Burgers' equation](https://en.wikipedia.org/wiki/Burgers%27_equation) is a 1D PDE of the form
+The [viscous Burgers' equation](https://en.wikipedia.org/wiki/Burgers%27_equation) is nonlinear convection-difussion PDE. In 1D it is written as
 
 $\partial_t u + \partial_x f = 0$
 
-with convection and diffusion fluxes
+with convection and diffusion flux
 
 $f = u^2/2 - \nu\partial_xu$
 
 where ``\nu`` is the diffusion coefficient (aka. viscosity). The PDE is defined in a 1D periodic domain of $x\in[0,2\pi]$. A random initial condition for $u$ will be considered (more details in [Initial and boundary conditions](#Initial-and-boundary-conditions))
 
-Because of the nonlinear term and the interplay with viscous effects, this PDE naturally distributes energy across a wide range of scales until it dissipates at the smallest scales. This resembles how *turbulence* behaves in fluid flows. so it is a good simple PDE to study numerical methods and turbulence models. The wave-propagating behaviour of the nonlinear term also gives rise to discontinuities, mimicking shock-wave phenomena of compressible flows.
+Because of the nonlinear term and the interplay with viscous effects, this PDE naturally distributes energy across a wide range of scales until it dissipates at the smallest scales. This resembles how *turbulence* behaves in fluid flows, so it is a good simple PDE to study numerical methods and turbulence models. The wave-propagating behaviour of the nonlinear term also gives rise to discontinuities, mimicking shock-wave phenomena of compressible flows.
 "
 
 # ╔═╡ 44d5b669-03f9-43b7-8248-6b4cfc2f8985
 md"### Finite volume method
 
-To discretize this PDE in space, we will resort to the FVM. Our basic assumption is that the continuous solution ``u(x,t)`` can be discretize in space into multiple cells. The solution at each cell ``i`` is a volume-average (or line for 1D) value
+To discretize this PDE in space, we will resort to the FVM. Our basic assumption is that the continuous solution ``u(x,t)`` can be discretize in space into multiple cells. The solution at each cell ``i`` is a volume-average (or segment in 1D) value
 
 $u_i(x,t)=\dfrac{1}{\delta x}\int^{x_{i+1/2}}_{x_{i-1/2}}u(x,t)\mathrm{d}x$
 
 where ``\delta x=(x_{i+1/2}-x_{i-1/2})`` is the cell volume.
 
-The piecewise-constant values create discontinuities of the solution at the cells interface.  
+The piecewise-constant values create discontinuities of the solution at the cells interface.
 "
 
 # ╔═╡ 15283d9e-cb12-4626-88ca-be7380acb5a6
@@ -247,7 +265,7 @@ PlutoUI.Resource("https://github.com/b-fg/BurgersEqFV.jl/blob/main/img/fv.svg?ra
 
 # ╔═╡ b022fe41-000e-440a-9ef9-28697fdb6d72
 md"
-The FVM takes advantage of the Gauss theorem, where the integral form of the PDE can be transformed from the divergence of the flux into a summation of the flux across the faces of a cell
+The FVM takes advantage of the [Gauss theorem](https://en.wikipedia.org/wiki/Divergence_theorem), where the integral form of the PDE can be transformed from the divergence of the flux into a summation of the flux across the faces of a cell
 
 $\dfrac{1}{\delta x}\int_{V}\partial_x f \mathrm{d}V = \dfrac{1}{\delta x}\int_{S} f\cdot\hat{n}\mathrm{d}S$
 
@@ -261,8 +279,8 @@ md"#### Numerical flux
 
 **Convective flux**
 
-Our next job is to define the intercell flux, aka. numerical flux, and a time-intergrator method.
-Importantly, we need the flux at the face, where a flux is $f=au$, and the wavespeed $a$ can also be a function of $u$, making the flux nonlinear as in the Burgers' equation. First, we focus on the convective flux $f_c=u^2/2$. Since we typically only have access to the cell-average value $u_i$, we first reconstruct the solution at the face $u_{i+1/2}$ and then compute the flux $f_{i+1/2}=f(u_{i+1/2})$, [''and that is the MUSCL approach''](https://doi.org/10.1016/j.jcp.2021.110640). For this, we resort to the [$κ$-scheme family by Van Leer](https://en.wikipedia.org/wiki/MUSCL_scheme#Piecewise_parabolic_reconstruction), which allows for a high-order state reconstruction at the face. The left side of the face, $u^L_{i+1/2}$ and the right, $u^R_{i+1/2}$, which is written symmetrically, are given by
+Our next job is to define the intercell flux, aka. numerical flux, and a time-integrator method.
+Importantly, we need the flux at the face, where a flux is $f=au$, and the wavespeed $a$ can also be a function of $u$, making the flux nonlinear as in the Burgers' equation. First, we focus on the convective flux $f_c=u^2/2$. Since we typically only have access to the cell-average value $u_i$, we first reconstruct the solution at the face $u_{i+1/2}$ and then compute the flux $f_{i+1/2}=f(u_{i+1/2})$, [''_and that is the MUSCL approach_''](https://doi.org/10.1016/j.jcp.2021.110640). For this, we resort to the [$κ$-scheme family by Van Leer](https://en.wikipedia.org/wiki/MUSCL_scheme#Piecewise_parabolic_reconstruction), which allows for a high-order state reconstruction at the face. The left side of the face, $u^L_{i+1/2}$ and the right, $u^R_{i+1/2}$, which is written symmetrically, are given by
 
 $u^L_{i+1/2} = u_i + \dfrac{1}{4}\left[(1-κ)(u_i-u_{i-1}) + (1+κ)(u_{i+1}-u_i)\right]$
 $u^R_{i+1/2} = u_{i+1} + \dfrac{1}{4}\left[(1-κ)(u_{i+1}-u_{i+2}) + (1+κ)(u_{i}-u_{i+1})\right]$
@@ -278,20 +296,20 @@ kscheme(um, ui, up, κ) = ui + 1 / 4 * ((1 - κ) * (ui - um) + (1 + κ) * (up - 
 
 # ╔═╡ e18166c1-5096-4d1b-9e65-562d5aca016d
 md"
-The $κ$-scheme provides a tunable parameter, $κ$, which can result in the following reconsuctrions:
+The $κ$-scheme provides a tunable parameter, $κ$, which can result in the following reconstructions:
 
 -  $$κ=-1$$: Upwind 2nd-order
 -  $$κ=0$$: Fromm 2nd-order
 -  $$κ=1/3$$: 3rd-order
--  $$κ=1/2$$: QUICK 3rd-order
+-  $$κ=1/2$$: QUICK 2nd-order
 -  $$κ=1$$: Central 2nd-order
 
-Note that the scheme goes from being fully upwind (-1) to fully central (1). Values of $κ<-1$ and $κ>1$ are allowed, and they bias the reconstruction even more to the upwind and downwind directions, respectively."
+Note that the scheme goes from being fully upwind (-1) to fully central (1)."
 
 # ╔═╡ 02e1a59c-c747-4bf0-93a8-074ea7f88f9b
-md"Next, after computing $u_L$ and $u_R$, we need to define how the intercell flux will be computed. Note that this numerical flux is unique to each face! That is $f_{i+1/2} = -f_{(i+1)-1/2}$.
+md"Next, after computing $u_L$ and $u_R$, we need to define how the intercell flux will be computed. Again, note that this numerical flux is unique to each face. That is $f_{i+1/2} = -f_{(i+1)-1/2}$.
 
-We choose the [Rusanov flux](link) to solve the Riemann problem at the face (two states at the same location)
+We choose the Rusanov flux to solve the Riemann problem at the face (two states at the same location) as it provides a stable and physically approximate solution to the wave-propagation problem
 
 $f_{i+1/2}(u_L,u_R) = \dfrac{1}{2}(f(u_L) + f(u_R)) - \dfrac{1}{2}\max{(|u_L|, |u_R|)}(u_R-u_L)$
 
@@ -310,7 +328,7 @@ end
 
 # ╔═╡ 67182a64-3145-4aaf-a766-56b7ce5292ea
 md"
-Note that the numerical flux can also be computed using exact or approximate [Riemann solvers](https://en.wikipedia.org/wiki/Riemann_solver).
+Note that the numerical flux can also be computed using other exact or approximate [Riemann solvers](https://en.wikipedia.org/wiki/Riemann_solver).
 "
 
 # ╔═╡ 57633811-38aa-4b57-9c5d-2573c4aef2e6
@@ -323,7 +341,7 @@ Let's break it down. First, we compute the discrete gradient using central diffe
 
 $\nu\partial_x u|_{i+1/2} \approx \nu\dfrac{u_{i+1} - u_i}{\delta x}$
 
-And then, using the divergence theorem again, we get the dissipative flux across the cell boundaries 
+And using the divergence theorem again, we get the dissipative flux across the cell boundaries
 
 $\partial_x (\nu \partial_x u) \approx \dfrac{\nu\partial_x u|_{i+1/2} - \nu\partial_x u|_{i-1/2}}{\delta x} = \dfrac{\nu\dfrac{u_{i+1} - u_i}{\delta x} - \nu\dfrac{u_{i} - u_{i-1}}{\delta x}}{\delta x}=\nu\dfrac{u_{i+1}-2u_i+u_{i-1}}{\delta x^2}$
 
@@ -336,7 +354,7 @@ f_diss(ui, up, ν, dx) = ν * (up - ui) / dx
 # ╔═╡ 8e2ad2d1-0d7c-44a1-95a6-1609244e525e
 md"#### Semi-discrete final form
 
-Adding the convective flux (`f_conv`) and the dissipative flux (`f_diss`) will provide us with the full RHS of the original PDE. As noted, the only variables needed are the discrete solution $u_i$, viscosity $\nu$, cell size $δx$, and $k$ value for the face-reconstruction scheme. In functional form"
+Adding the convective flux (`f_conv`) and the dissipative flux (`f_diss`) will provide us with the full RHS of the original PDE. As noted, the only variables needed are the discrete solution $u_i$, viscosity $\nu$, cell size $δx$, and $\kappa$ value for the face-reconstruction scheme. In functional form"
 
 # ╔═╡ f0e04804-3014-4b93-a8dc-428c8a7087e1
 function dudt!(rhs, ui, f_num, ν, dx, κ)
@@ -348,20 +366,20 @@ end
 
 # ╔═╡ bf3bb88e-36d2-4c64-942c-f14d13072924
 md"
-Here we used a few syntax conventions and helpers here:
-- `u` is a 1D array (`Vector`) storing the solution, and `fK` is the vector storing the numerical flux at the face. Since we have a periodic domain, `length(u)==length(fK)`
+Here we used a few Julia syntax conventions and helpers here:
+- `u` is a 1D array (`Vector`) storing the solution, and `fK` is the vector storing the numerical flux at the face. Since we have a periodic domain: `length(u)==length(fK)`
 - `rhs` is the vector storing the RHS values, and we have named the function `dudt!` indicating with `!` that the content of `rhs` is going to be modified in this function
-- `@views` provide a view into a specific slice of an array without allocating new memory. For example, `ui[i+1] == up[i]`, and `ui[i+1] - ui[i]` becomes just `up[i] - ui[i]`
-- This allows to use broadcasting more efficiently. The `@.` syntax indicates that a macro called `@.` will expand every operator in that line of code from a scalar to a vector operation, that is$br `@. f_num = f_conv(um, ui, up, upp, κ) - f_diss(um, ui, up, ν, dx)` $br becomes $br `f_num .= f_conv.(um, ui, up, upp, κ) .- f_diss.(um, ui, up, ν, dx)` $br so we do not need to write all the dots in this way (the macro will generate it for us before compilation).
+- `@views` provide a view into a specific slice of an array without allocating new memory. For example, `ui[i+1] == up[i]`, and `(ui[i+1] - ui[i])` becomes `(up[i] - ui[i])`
+- This allows to use broadcasting more efficiently. The `@.` syntax indicates that a macro called `@.` will expand every operator in that line of code from a scalar to a vector operation, that is$br `@. f_num = f_conv(um, ui, up, upp, κ) - f_diss(um, ui, up, ν, dx)` $br becomes $br `f_num .= f_conv.(um, ui, up, upp, κ) .- f_diss.(um, ui, up, ν, dx)` $br so we do not need to write all the dots in this way (the macro will generate it for us before compilation)
 "
 
 # ╔═╡ 722df141-cc69-42d7-be90-ac9edc25c0cc
 md"### Temporal integrator
-Ww now have the spatial discretization in place, computing the RHS of the PDE, or equivalenlty
+We now have the spatial discretization in place, computing the RHS of the PDE, or equivalently
 
 $\dfrac{\mathrm{d}u_i}{\mathrm{d}t}=\mathrm{RHS}(u_i)$
 
-The simplest temporal integrator to advance solution in time is the [forward Euler method](https://en.wikipedia.org/wiki/Euler_method)
+The simplest temporal integrator to advance a solution in time is the [forward Euler method](https://en.wikipedia.org/wiki/Euler_method)
 
 $u_i^{(n+1)} = u_i^{(n)} + \mathrm{RHS}\left(u_i^{(n)}\right) \delta t$
 
@@ -374,7 +392,7 @@ function stepEuler!(u, rhs, dt)
 end
 
 # ╔═╡ ca8e914f-09b5-4148-ac63-9938a30130fa
-md"The forward Euler is 1st-order explicit integration method, so its stability region is quite limited! Thus, we need to use a low [CFL](https://en.wikipedia.org/wiki/Courant%E2%80%93Friedrichs%E2%80%93Lewy_condition) value to produce stable results (simulation not blowing up!).
+md"The forward Euler is a 1st-order explicit integration method, so its stability region is quite limited! Thus, we need to use a low [CFL](https://en.wikipedia.org/wiki/Courant%E2%80%93Friedrichs%E2%80%93Lewy_condition) value to produce stable results (simulation not blowing up).
 
 We will use the CFL condition to predict a stable time step dynamically. We need to account for convective and diffusive conditions, and pick the most restrictive one
 
@@ -399,9 +417,9 @@ With the semi-discrete form of the PDE arising with the FVM, and the temporal in
 
 # ╔═╡ 50b6ec5f-5703-4f02-90d0-1cf65501ad26
 begin
-	energy(u) = 1/2 * sum(abs2, u) / length(u) 
+	energy(u) = 1/2 * sum(abs2, u) / length(u)
 	info(i, u, dt, t) = @sprintf("ndt = %04i | dt = %.3e | t = %.3e | E = %.3e", i, dt, t, energy(u))
-	
+
 	function timeloop!(u, rhs, f_num, ν, dx, κ; t_max=0.1, CFL=0.1, verbose=true)
 		t, i = 0.0, 0
 		verbose && @info u
@@ -416,18 +434,21 @@ begin
 	end
 end
 
+# ╔═╡ 619a237c-8ba0-401f-b953-d71085c59634
+md"Note that we monitor the energy of the state after every time step when calling the new `info` and `energy` functions."
+
 # ╔═╡ 0a18cd65-8b71-45ca-9f5e-efecdd5a9652
 md"### Initial and boundary conditions
 
-The problem needs to be closed with an initial condition (IC) and boundary conditions (BC).
+The problem needs to be closed with an initial condition (IC) and boundary conditions (BCs).
 
 #### Boundary conditions
 
-BCs are set as periodic. In our discretized spatial domain this means that $f_{N+1/2} := f_{1-1/2}$, and the solution $u_{N+1}:=u_N$. In Julia, we can use the package [`CircularArrays`](https://github.com/Vexatos/CircularArrays.jl) which automatically provides this periodic behaviour when looping through any array (also multidimensional).
+BCs are set as periodic. In our discretized spatial domain this means that $f_{N+1/2} = f_{1-1/2}$, and the solution $u_{N+1}=u_N$. In Julia, we can use the package [`CircularArrays`](https://github.com/Vexatos/CircularArrays.jl) which automatically provides this periodic behaviour when looping through any array
 "
 
 # ╔═╡ c693332c-e754-4f13-a218-9616814e22be
-begin 
+let
 	a_periodic = CircularArray(a)
 	@test a_periodic[end+1] == a_periodic[1]
 end
@@ -436,18 +457,21 @@ end
 md"Instead, we see that we cannot do this with standard arrays"
 
 # ╔═╡ 83adcff0-ec11-430b-bfd3-dc08fbc5fb41
-a[end+1] == a[1] 
+a[end+1] == a[1]
 
 # ╔═╡ a97a40e6-cc4a-4ae8-a99f-edf357bfec49
 md"#### Initial condition
 
-Instead of considering the initial condition for $u_i$, we set an initial condition for the **energy spectrum** of $u_i$. That is, we set an analytical function for $\hat{E}(k)$, ie. the energy content of $u_i$ in Fourier space ($k$). The analytical function for $\hat{E}(\kappa)$ is
+Instead of defining the initial condition for $u_i$, we set an initial condition for the **energy spectrum** of $u_i$. That is, we set an analytical function for $\hat{E}(k)$, ie. the energy content of $u_i$ in Fourier space ($k$). _[Note the notation difference between $k,$ the wavenumber, and $\kappa,$ the numerical scheme by van Leer]_
+
+
+The analytical function for $\hat{E}(k)$ is
 
 $\hat{E}(k) = A^4k^4e^{-(k/k_0)^2}$
 
 where $A$ is a constant set as $A=2k_0^{-5}/(3\sqrt{\pi})$ so that $\int_0^\infty\hat{E}(k)\mathrm{d}k=1/2$. Here $k_0$ is the wavenumber at which we want the energy to peak, and we select $k_0=10$.
 
-The mode amplitude of the initial condition at each wavenumber is $|\hat{u}(k)|=\sqrt{2\hat{E}(k)}$ (ie. the amplitude of harmonic functions of course). So we find each mode amplitude and frequency with
+The mode amplitude of the initial condition at each wavenumber is $|\hat{u}(k)|=\sqrt{2\hat{E}(k)}$ (ie. the amplitude of an harmonic function). So we find each mode amplitude and frequency with
 
 $\hat{u}(k)=\sqrt{2\hat{E}(k)}e^{i2\pi R(k)}$
 
@@ -464,9 +488,9 @@ function u0(N, L; T=Float64, k0=10, i=1)
     A = 2k0^(-5) / (3√π) # constant
     k = rfftfreq(N, 2π / L * N) # [0, 1, 2, ..., N÷2]
     Ek = @. A * k^4 * exp(-(k / k0)^2)
-    R = rand(N÷2+1) # random number generator for random phases
+    R = rand(N÷2 + 1) # random number generator for random phases
     uk = sqrt.(2Ek) .* exp.(im * 2π * R)
-	u = real(irfft(uk, N) * N) # use inverse real fft   
+	u = real(irfft(uk, N) * N) # use inverse real fft
 	return T.(u)
 end
 
@@ -475,7 +499,7 @@ end
 md"Now we check that our implementation is correct"
 
 # ╔═╡ 2ddd6297-9015-4b26-875d-09237bd51c65
-let # Check E=1/2
+let # check E=1/2
 	N, L = 64, 2π
 	u_IC = u0(N, L) # as N increases, we get closer to the E=0.5 value
 	E = energy(u_IC)
@@ -486,10 +510,10 @@ end
 # ╔═╡ 7b16ed74-2039-4261-9aea-6db54971969a
 md"### Visualization
 
-To verify code implementetion, visual checks are also very useful! So we will plot both the solution (or state) and its spectrum.
+To verify code implementation, visual checks are also very useful! So we will plot both the solution (or state) and its spectrum.
 
 #### Spectrum
-To compute the spectrum we will use again the FFT now in forward (not inverse mode)
+To compute the spectrum we will use again the FFT now in forward mode, from physical to Fourier space, to get $\hat{u}_i(k)$ from ${u}_i(x)$ 
 "
 
 # ╔═╡ 8326d605-5452-4fe6-b2f3-16e6acbbeb48
@@ -530,7 +554,7 @@ begin # Just some options for making the plots more beautiful
 	);
 	my_theme_default = merge(theme_latexfonts(), my_theme_default)
 	set_theme!(my_theme_default)
-	
+
 	function get_Ek_data(fname)
 		data = take!(Downloads.download("https://github.com/b-fg/BurgersEqFV.jl/blob/main/data/$fname?raw=true", IOBuffer())) |> IOBuffer
 		k_DNS, Ek_DNS = jldopen(data) do f
@@ -541,7 +565,7 @@ begin # Just some options for making the plots more beautiful
 end;
 
 # ╔═╡ 3e684e9d-48eb-4fc7-8448-a9c5681015f3
-md"And then we define the plotting function using [Makie](https://docs.makie.org/stable/). Note that some plotting parameters are hidden in the previous cell because they are not important. Also the function to get DNS data already generated is hidden there."
+md"And then we define the plotting function using [Makie](https://docs.makie.org/stable/). Note that some plotting parameters are hidden in the previous cell because they are not important. Also the function to get direct numerical simulation (DNS) reference data that has been already generated is hidden there."
 
 # ╔═╡ 45cdb3a3-8a9e-464a-8630-75c6342686d2
 function plotEk(u; L=2π, dns_data=nothing)
@@ -550,19 +574,19 @@ function plotEk(u; L=2π, dns_data=nothing)
 end
 
 # ╔═╡ 5b730ef5-d5d6-419c-9f75-0c4b4bab018a
-function plotEk(k, Ek; L=2π, dns_data=nothing)
+function plotEk(k, Ek; L=2π, dns_data=nothing) # different function signature from definition above
 	fig = Figure()
 	ax = Axis(fig[1, 1]; my_Ek_axis_props...)
 
 	Ek_label = latexstring(raw"$N=2^{" * string(1+Int(log2(length(k)-1))) * raw"}$")
-	lines!(ax, k, Ek, label=Ek_label) # E(k) plot
+	lines!(ax, k, Ek, label=Ek_label, alpha=0.65, depth_shift=-1) # E(k) plot
 	vlines!(ax, length(k), color=:black, alpha=1, linestyle=:dash, linewidth=0.25) # wavenumber cutoff
 
 	if !isnothing(dns_data)
 		k_DNS, Ek_DNS = dns_data
 		lines!(ax, k_DNS, Ek_DNS, label=L"DNS ($N=2^{13}$)", color=:black) # E(k) plot from DNS data
 	end
-	
+
 	axislegend(ax, position=:rt, framewidth=0.1, alpha=0.1) # add legend
 	return fig
 end
@@ -571,7 +595,7 @@ end
 plotEk(u0(64, 2π))
 
 # ╔═╡ 2a1f2672-23db-4dbb-89be-7fd6ae69ac49
-md"Actually, we will also want to visualize the spectrum of the direct numerical simulations (DNS) solution on top of our coarse simulation. This simulation has already been run, and data can be find [here](https://github.com/b-fg/BurgersEqFV.jl/tree/main/data). So let's get that spectrum and plot it on top of our initial condition spectrum" 
+md"Actually, we will also want to visualize the spectrum of the DNS solution on top of our coarse simulation. This simulation has already been run, and data can be find [here](https://github.com/b-fg/BurgersEqFV.jl/tree/main/data). So let's get that spectrum and plot it together with our initial condition spectrum"
 
 # ╔═╡ 98634f8f-7d16-4460-bba3-707b4d31c6cd
 k_dns, Ek_dns = get_Ek_data("p13_t0.10_nu5e-04_spectrum.jld2")
@@ -580,18 +604,18 @@ k_dns, Ek_dns = get_Ek_data("p13_t0.10_nu5e-04_spectrum.jld2")
 plotEk(u0(64, 2π); dns_data=(k_dns, Ek_dns))
 
 # ╔═╡ bf7d1b86-bf6a-4c5d-81ff-b9d6bed9b25d
-md"Note that the DNS solution is computed in a x128 finer grid ($N=2^{13}=8192$ cells), and this spectrum is captured at solution time $t=0.1$."
+md"Note that the DNS solution is computed in a x128 finer grid ($N=2^{13}=8192$ cells), and this spectrum is captured at solution time $t=0.1$, when physical dissipation is at its peak after all energy has been distributed across the scales."
 
 # ╔═╡ 187aec84-7fdf-483e-b502-60b258e2ae21
 md"#### Solution state
 
-And now let's see how our initial condition actually looks like! We will plot $u$ in real space. But for this, we need to define our grid first. Here, our assumption is that we have uniform spacing, and that our solution is the cell average value stored at the center of the cell (as per FVM). Then, we can define a grid like"
+And now let's see how our initial condition actually looks like! We will plot $u_i$ in physical space. But for this, we need to define our grid first. Here, our assumption is that we have uniform spacing, and that our solution is the cell-averaged value stored at the center of the cell (as per FVM). Then, we can define a grid like"
 
 # ╔═╡ aef3c34f-217c-40cc-8653-fda0094ea5fc
 xg(N, L; T=Float64) = range(0, N - 1) .* L / N .+ (L / N / 2) |> collect .|> T
 
 # ╔═╡ 68cbbbc5-5137-4351-83b7-297255b139c0
-md"And test this for a small grid. We should see how our grid is stored in the cell center. For $N=10$, a $L=10$ domain size yields to $\delta x=1$, so our first grid point should be at $x_1=0.5$"
+md"Testin this function for a very small grid, we see that the locations are correct. For $N=10$, a $L=10$ domain size yields to $\delta x=1$, so our first grid point should be at $x_1=0.5$. Still, note that this is pure visualiation, and the constant grid spacing $\delta x = L / N$ is all that matter from a formulation standpoint."
 
 # ╔═╡ a17118f2-6742-4c24-84ea-cb208020e91d
 xg(10, 10)
@@ -616,9 +640,9 @@ end
 # ╔═╡ f943b4af-fcda-4327-bade-d3c6cc5192ea
 md"### Running a simulation
 
-We have all we need now to run our first simulation! So let's get at it. We first define our global parameters, such as number of cells `N`, domain size `L`, viscosity $\nu$, or floating-point precision `T`. Then, we can generate an initial condition with the `u0` function, and use the `timeloop!` function to advance the solution in time.
+We have all we need now to run our first simulation! So let's get at it. We first define the global parameters, such as number of cells `N`, domain size `L`, viscosity $\nu$, or floating-point precision `T`. Then, we can generate an initial condition with the `u0` function, and use the `timeloop!` function to advance the solution in time.
 
-We can also play with the value $k$ of the vanLeer k-scheme, as introduced in [#Numerical-flux](#Numerical-flux)"
+We can also play with the $\kappa$ value of the van Leer $\kappa$-scheme, as introduced in [#Numerical-flux](#Numerical-flux)"
 
 # ╔═╡ e3314223-f671-4d61-8d4c-58086fb157a3
 function run(N, κ; L=2π, ν=5e-4, t_max=0.1, CFL=0.25, i=1, verbose=true)
@@ -643,7 +667,7 @@ Remember that:
 -  $$\kappa=-1$$: Upwind 2nd-order
 -  $$\kappa=0$$: Fromm 2nd-order
 -  $$\kappa=1/3$$: 3rd-order
--  $$\kappa=1/2$$: QUICK 3rd-order
+-  $$\kappa=1/2$$: QUICK 2nd-order
 -  $$\kappa=1$$: Central 2nd-order
 "
 
@@ -665,13 +689,16 @@ let
 end
 
 # ╔═╡ 3303d3fa-0371-4143-9fb4-b2c2b1059b8c
-md"We see that the more cells we use, the more resolved our discontinuities are. Also, when using central-biased schemes, if $N$ is not large enough, we observed strong oscillations of the solution near the shock, since central schemes are highly dispersive (and not dissipative). The effects is reversed with upwind schemes. Note that
+md"We see that the more cells we use, the more resolved our discontinuities are. The required spatial resolution is in fact $\delta x \le \nu / \Delta U^2$, where $\Delta U$ is the velocity jump across a shock. So for $\nu=0.0005$, $L=2\pi$, and noting that our typically $\Delta U=1$, we need about $N=L \Delta U^2 / \nu\sim10^4$ cells to resolve it. Our DNS data has been generated with $N=2^{13}=8192$ cells.
 
-- **Numerical diffusion**: smoothing out solution, dampening gradients. Arises because of from even-order terms in Taylor series expansion of a derivative. In terms of fourier series, is a missmatch of the amplitude of the modes.
-- **Numerical dispersion**: oscillations in the solution, specially near sharp gradients. Arises because of from odd-order terms in Taylor series expansion of a derivative. In terms of Fourier series, is a missmatch on the phase of the modes"
+
+Also, when using central-biased schemes, if $N$ is not large enough, we observed strong oscillations of the solution near the shock because central schemes are highly dispersive (and not dissipative). The effects is reversed with upwind schemes. Note that
+
+- **Numerical diffusion**: smoothing out solution, dampening gradients. Arises from even-order terms in Taylor series expansion of a derivative. In terms of Fourier series, is a mismatch of the amplitude of the modes.
+- **Numerical dispersion**: oscillations in the solution, specially near sharp gradients. Arises from odd-order terms in Taylor series expansion of a derivative. In terms of Fourier series, is a mismatch on the phase of the modes."
 
 # ╔═╡ e51b6e28-84c8-4dd1-9e40-1fca0e665be2
-md"We also see that our spectrum is very noisy compared to the DNS one. That's because **the DNS spectrum is in fact an average of 512 different simulations** (with different random initial conditions). So we will do the same for our large-eddy simulation (coarse DNS). Note that we pass the simulation counter `i` to be the seed of our Random number generator in the initial condition `u0(N, L; T, i)` so that each initial condition is different and then we average the spectrums
+md"We also see that our spectrum is very noisy compared to the DNS one. That's because **the DNS spectrum is in fact an average of 512 different simulations** (with different random initial conditions). So we will do the same for our large-eddy simulation (coarse DNS). Note that we pass the simulation counter `i` to be the seed of our Random number generator in the initial condition `u0(N, L; T, i)` so that each initial condition is different. Then, at $t=0.1$ we compute each spectrum and them average them
 
 $\bar{\hat{E}}(k) = \frac{1}{M}\sum_{i=1}^{M}\hat{E}_i(k)$
 "
@@ -686,7 +713,7 @@ function run_ensemble(N, M, κ; L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, 
 	end
 	Ek_mean = mean(Ek_i, dims=2)[:]
 	return Ek_mean
-end	
+end
 
 # ╔═╡ 5c9b6fb1-a5cd-4c38-926c-29df4e63d71f
 md" $M=$ $(@bind M_val PlutoUI.Slider(1:32, show_value=true))"
@@ -708,42 +735,42 @@ let
 	N = 2^p_val2
 	L = 2π
 	T = Float64
-	
+
 	Ek_mean = run_ensemble(N, M_val, T(κ_val2))
 	k = rfftfreq(N, 2π / L * N)
 	plotEk(k, Ek_mean; L, dns_data=(k_dns, Ek_dns))
 end
 
 # ╔═╡ 5761ec37-1578-4adf-ae04-8002efe7b225
-md"We see that the more simulations we run in the ensemble, the less noisy our spectrum gets! Also not how the spectrum changes with different values of $\kappa$. Moving towards upwind scheme, $\kappa<0$, adds numerical dissipation, and the energy at small scales (high wavenumbers) gets significantly reduce. Moving towards central schemes, $\kappa>0$, makes our solution accumulate energy at small scales because the scheme produces spourious oscillations near discontinuities and there is not enough numerical dissipation to get rid of it."
+md"We see that the more simulations we run in the ensemble, the less noisy our spectrum gets! Also note how the spectrum changes with different values of $\kappa$. Moving towards upwind scheme, $\kappa<0$, adds numerical dissipation, and the energy at small scales (high wavenumbers) gets significantly reduced. Moving towards central schemes, $\kappa>0$, makes our solution accumulate energy at small scales because the scheme produces spurious oscillations near discontinuities and there is not enough numerical dissipation to get rid of it."
 
 # ╔═╡ a3d9151f-d0b4-4c16-a38c-bd935305306c
 md"## 3. Modelling subgrid scales using numerical dissipation
 
-Subgrid-scale modelling, also know as turbulence modelling in the context of large-eddy simulation, consist in mimicking the viscous effects of the unresolved scales with either an explicit term in the RHS of the governing equation (explicit turbulence modelling), or with the numerical dissipation of our numerical schemes, known as **implicit turbulence models**.
+Subgrid-scale modelling, also know as turbulence modelling in the context of large-eddy simulation, consists of mimicking the viscous effects of the unresolved scales with either an explicit term in the RHS of the governing equation (explicit turbulence modelling), or with the numerical dissipation of our numerical schemes, known as **implicit turbulence models**.
 
-This part of the tutorial focuses on **finding the best face-reconstruction scheme for a given grid resolution using an optimization approach**.
+This part of the tutorial focuses on **finding the best face-reconstruction scheme for a given grid resolution using an optimization method that reduces the energy spectrum mismatch**.
 
-Implicit LES models are not tunned for a particular resolution, and instead rely on the fact that numerical dissipation reduces as grid resolution increases. However, this does not offer a tunnable turbulence model once a numerical scheme is selected. In contrast, explicit LES models can tune added dissipation by adjusting certain coefficients in the model. _Can we do the same for implicit LES?_
-" 
+Implicit LES models are not tuned for a particular resolution, and instead rely on the fact that numerical dissipation reduces as grid resolution increases. However, this does not offer a tunable turbulence model once a numerical scheme is selected. In contrast, explicit LES models can tune added dissipation by adjusting certain coefficients in the model. _Can we do the same for implicit LES?_
+"
 
 # ╔═╡ e3bd6016-4455-4bb6-8c55-966d3ed0ae0d
 md" To solve this optimization problem we need the following ingredients
 
 1. Select the parameter we are going to optimize
 1. Define an error metric, aka. loss, to optimize for
-1. Compute the gradient of our loss wrt. to the tunable parameter
+1. Compute the gradient of our loss wrt. the tunable parameter
 1. Update the parameter using the gradient information"
 
 # ╔═╡ b27c89c7-6f0b-4974-9e35-9323de822d78
 md"### Select the tunable parameter
 
-As you may have guessed, we are going to find the optimal $\kappa$ values of the van Leer $\kappa$-scheme, ie. our face-reconstruction scheme, which we can recall
+As you may have guessed, we are going to find the optimal $\kappa$ value of the van Leer $\kappa$-scheme, ie. our face-reconstruction scheme. Recall this is given by
 
 $u^L_{i+1/2} = u_i + \dfrac{1}{4}\left[(1-\kappa)(u_i-u_{i-1}) + (1+\kappa)(u_{i+1}-u_i)\right]$
 
 This is why we have constructed our solver so that $\kappa$ is an input parameter of
-	
+
 `run_ensemble(κ) → run(κ) → timeloop!(κ) → dudt!(κ) → f_conv(κ) → kscheme(κ)`
 
 "
@@ -751,19 +778,16 @@ This is why we have constructed our solver so that $\kappa$ is an input paramete
 # ╔═╡ f508364a-03b4-439d-a6e1-b611f802d0b5
 md"### Define an error metric
 
-Since we have access to the DNS data, we will use the energy spectrum as a metric for our loss function. This can be better defined in logarithim space, since we want to be correctly modelling all the scales, ie. both low and high wavenumbers. Thus we take a mean value of the difference at every wavenumber, until the wavenumber cutoff $k_c=N/2+1$ 
+Since we have access to the DNS data, we will use the energy spectrum as a metric for our loss function. This can be better defined in logarithim space, since we want to be correctly modelling all the scales, ie. both low and high wavenumbers. Thus we take a mean value of the difference at every wavenumber, until the wavenumber cutoff $k_c=N/2+1$
 
 $\varepsilon(\kappa) = \dfrac{1}{k_c}\sum_{k=1}^{k_c}\log_{10} \left|\dfrac{\bar{\hat{E}}(k;\kappa)}{\bar{\hat{E}}_\text{DNS}(k)}\right|$
 
 Note that we compute the loss with the ensemble-averaged spectrum so that it is less noisy. Let's code it
 "
 
-# ╔═╡ 8dbab830-a2d8-445e-a235-6707513d11b6
-# ε(Ek, Ek_dns) = sum(abs, log10.(Ek / Ek_dns[1:length(Ek)])) / length(Ek)
-
 # ╔═╡ ec313cfc-8853-49ab-9e42-84879b35b619
-function ε(Ek, Ek_dns)
-	k_min, k_max = 2, length(Ek) - 2
+function ε_spectrum(Ek, Ek_dns)
+	k_min, k_max = 1, length(Ek)
 	Ek_slice = @views Ek[k_min:k_max]
 	Ek_dns_slice = @views Ek_dns[k_min:k_max]
 	sum(abs, @. (log10(Ek_slice / Ek_dns_slice))) / length(Ek_slice)
@@ -780,20 +804,20 @@ md"### Compute the gradient of the loss
 
 To be able to run an optimizer for $\kappa$, we should define how to compute the gradient ${\partial \varepsilon}/{\partial \kappa}$ so that we can step in the right (minimum error) direction
 
-$\kappa^{(i+1)}=\kappa^{(i)} - \delta\dfrac{\partial \varepsilon(\kappa^{(i)})}{\partial \kappa}$
+$\kappa^{(j+1)}=\kappa^{(j)} - \delta\dfrac{\partial \varepsilon(\kappa^{(j)})}{\partial \kappa}$
 
-where we need to perform a number of iterations ($i$) and use small steps ($\delta$) in order to reach a minimum. This is known as [gradient descend](https://en.wikipedia.org/wiki/Gradient_descent).
+where we need to perform a number of iterations $(j)$ and use small steps $(\delta)$ in order to reach a minimum. This is known as [gradient descend](https://en.wikipedia.org/wiki/Gradient_descent).
 
 A naive approach to compute the loss gradient would be to use a finite difference approximation such as
 
 $\dfrac{\partial \varepsilon}{\partial \kappa}\approx\dfrac{\varepsilon(\kappa+δ\kappa) - \varepsilon(\kappa)}{\delta \kappa}$
-It would be naive because our loss function might be not very smooth, so the gradient of such function can become very noisy! So this would not be particularly helpful to find the correct $\kappa_\text{opt}$ value. 
+It would be naive because our loss function might be not very smooth, so the gradient of such function can become very noisy! Indeed, this would not be particularly helpful to find the correct $\kappa_\text{opt}$ value.
 "
 
 # ╔═╡ 00e96f3d-9baf-47be-88ae-a123ee353f49
 md"#### Automatic differentiation
 
-Instead, let us introduce [Automatic Differentiation](https://en.wikipedia.org/wiki/Automatic_differentiation) (AD). Specific to computer programs, this technique allows to compute the derivative of a function by tracking all the _analytic_ operators that such function makes use of. Note that in computer programs, we can *only* use analytic operators since we have a finite set of instructions that can be implemented and compiled. So AD takes advantages of this and computes the derivative by chain-rule of the derivatives of all the analytic operators.
+Instead, let us introduce [Automatic Differentiation](https://en.wikipedia.org/wiki/Automatic_differentiation) (AD). Specific to computer programs, this technique allows to compute the derivative of a function by tracking all the _analytical_ operators that such function makes use of. Note that in computer programs, we can *only* use analytical operators since we have a finite set of instructions that can be implemented and compiled. So AD takes advantages of this and computes the gradient by chain-rule of the derivatives of all the analytic operators.
 
 Let's show an example with a function containing sharp (but $C^\infty$ - continous) gradients
 "
@@ -808,7 +832,7 @@ md"By analytical derivation using the chain rule, we know that this function has
 df(x) = cos(x) * exp(x) + sin(x) * exp(x)
 
 # ╔═╡ 6b25cceb-f9ba-4a38-b3b3-5439a4b083e4
-md"Julia, being a dynamic-type language, allows to take automatic derivatives by passing a `Dual` number as function input. Dual number contain a value and a derivative. Every time the value of the Dual number is mutated, the derivative is also updated using AD. This is readily implemented in Julia via the [`ForwardDiff.jl`](https://github.com/JuliaDiff/ForwardDiff.jl) package"
+md"Julia, being a dynamic-type language, allows to take automatic derivatives by passing a `Dual` number as function input. Dual numbers contain a value and a derivative. Every time the value of the Dual number is mutated, the derivative is also updated using AD. This is readily implemented in Julia via the [`ForwardDiff.jl`](https://github.com/JuliaDiff/ForwardDiff.jl) package"
 
 # ╔═╡ 70c61c91-55fb-4491-92b4-17fd7793bac9
 let
@@ -830,65 +854,122 @@ md"And compare it with the analytical derivative"
 df(4.0)
 
 # ╔═╡ b8f9bdb5-9f3a-49ea-84d4-be36daaab308
-md"Here we see that indeed AD takes exact first-order derivatives -- Nice! Of course, finite differences is never exact since we need $\delta x$ to be infinitessimally small. Even when using $\delta x\approx10^{-15}$ and a central difference we are significantly innacurate"
+md"Here we see that indeed AD takes exact first-order derivatives -- Nice! Of course, finite differences is never exact since we need $\delta x$ to be infinitesimally small. Even when using $\delta x\approx10^{-15}$ and a central difference we are significantly inacurate"
 
 # ╔═╡ 3ad53729-5923-4e9f-806d-25c63000535b
-(f(4.0 + 10eps(Float64)) - f(4.0 - 10eps(Float64))) /  20eps(Float64)
+(f(4.0 + 1e-15) - f(4.0 - 1e-15)) /  2e-15
 
 # ╔═╡ 3e6baf78-b860-4152-a93d-9d832524bce0
 md"#### Differentiable solver
 
-So through AD we can indeed compute the derivative ${\partial \varepsilon}/{\partial \kappa}$ to finally perform gradient descent! Since we have not fixed the input types for any functions of our solver -- that is, we have written each function as `g(x, y)` instead of `g(x::Vector{Float64}, y::Float64)` -- we can propagate `Dual` types using `ForwardDiff.jl`
+So through AD we can indeed compute the derivative ${\partial \varepsilon}/{\partial \kappa}$ to finally perform gradient descent! Since we have not fixed the input types for any functions of our solver -- that is, we have written each function as `g(x, y)` instead of `g(x::Vector{Float64}, y::Float64)` -- we can propagate `Dual` types using `ForwardDiff.jl`.
 
-Let's define a couple of high-level function that we will use for optimization
+Let's define a couple of high-level function that we will use for optimization. First our error metric of the ensemble spectrum in function of grid size, ensemble size, and $\kappa$
 "
 
 # ╔═╡ 302287a8-26d8-469b-a2d0-9ce4e1d39599
-ε_ensemble(N, M, κ; kwargs...) = ε(run_ensemble(N, M, κ; kwargs...), Ek_dns)
+function ε_ensemble(N, M, κ; verbose=false, kwargs...)
+	err = ε_spectrum(run_ensemble(N, M, κ; kwargs...), Ek_dns)
+	verbose && println(@sprintf("κ = %.4f | spectrum_err = %.4f", κ[1], err))
+	return err
+end
 
-# ╔═╡ 7082bb49-1d84-4425-9f34-b690a62be1b1
-drun_ensemble2(κ) = (N, M; kwargs...) -> ε_ensemble(N, M; κ, kwargs...) # call: drun_ensemble(κ)(N, M)
+# ╔═╡ 1773fe9d-53be-4f2b-9b27-6432a4f0715c
+md"We now define the function that we will differentiate. The purpose is to make it only a function of $\kappa$. So here we _curry_ the $N,M$ arguments. Thus when passing $N,M$ into `∂ε_ensemble`, this one **returns a new callable function** which is only function of $\kappa$. _[This step is not strictly necessary, but makes explicit that we only want ${\partial \varepsilon}/{\partial \kappa}$ and not, for example, ${\partial \varepsilon}/{\partial N}$]_"
 
 # ╔═╡ 317b3ad0-a531-4022-83bc-b646784f6e31
-drun_ensemble(N, M; kwargs...) = κ -> ε_ensemble(N, M, κ; kwargs...) # call: drun_ensemble(N, M)(κ)
+∂ε_ensemble(N, M; kwargs...) = κ -> ε_ensemble(N, M, κ; kwargs...) # call: ∂ε_ensemble(N, M)(κ)
+
+# ╔═╡ 5be4c113-1f8c-40c2-8711-cd977431ab9b
+md"And we test that it works for both regular and `Dual` $\kappa$ inputs. Note that we get a `Dual` output with a `Dual` input!"
 
 # ╔═╡ 87bbc012-6c1d-4556-b59c-193ecea2e8cc
-drun_ensemble(2^6, 4)(-1.0)
-
-# ╔═╡ ed80935b-de6b-47a1-9f0d-caf11f74fd18
 let
-	x0 = ForwardDiff.Dual{Float64}(-1.0, one(-1.0))
-	drun_ensemble(2^6, 4)(x0)
+	N, M, κ = 2^6, 1, -1.0
+	@info ∂ε_ensemble(N, M; verbose=false)(κ)
+
+	κ_dual = ForwardDiff.Dual{Float64}(κ, one(κ))
+	@info ∂ε_ensemble(N, M; verbose=false)(κ_dual)
 end
 
 # ╔═╡ 82a242bc-b486-4afc-b669-7f4edbbf311e
 md"### Solve the optimization problem
 
-As we have introduced earlier, we will use gradient descent to optimize $\kappa$. The [`Optim.jl`](https://github.com/JuliaNLSolvers/Optim.jl) package provides several optimizers that we can select. The API is rather simple: define an optimizer, select maximum number of iterations, and use constraints if necessary. Here, since we know that $\kappa<1$, we will set this as an upper bound. For the lower bound, we will let $\kappa>-1.75$ (instead of $\kappa>-1$) to allow for significant upwind bias if required. We will use a the `Fminbox` method for the outer loop optimization which restricts the search within a constrained box. Each outer loop evaluation will be performed by `GradientDescent()`, also with a fixed number of iterations. Last we select how to compute the gradient: of course, we will use AD ;)"
+As we have introduced earlier, we will use gradient descent to optimize $\kappa$. The [`Optim.jl`](https://github.com/JuliaNLSolvers/Optim.jl) package provides several optimizers that we can select. The API is rather simple: define an optimizer, select maximum number of iterations, and use constraints if necessary. Here, since we know that $-1<\kappa<1$, we will set these as lower and upper bounds.
+
+We will use a the `Fminbox` method for the outer loop optimization which restricts the search within a constrained box. Each inner loop evaluation will be performed by `GradientDescent()`. The optimization stops when either tolerance or maximum iterations are reached."
+
+# ╔═╡ e85c50c4-b0bd-4f30-b2b7-c02cd3d8471d
+md"We can optimize $\kappa$ for different grid sizes $N$, and we set the number of simulations $M=32$. That is, an optimization step is performed by matching the DNS averaged spectrum ($N=2^{13},\, M=512$) and the LES averaged spectrum ($N=2^p,\, M=32$)."
+
+# ╔═╡ fa508394-d588-4c1f-8cba-0f733451b645
+md" $p=$ $(@bind p_val3 PlutoUI.Slider(6:10, show_value=true))"
 
 # ╔═╡ 8ef057f4-996d-4694-8e0f-f45f347535b5
-let
-    N = 2^7
-    M = 32
+function opt(; verbose=false)
+    N, M = 2^p_val3, 32
     κ₀, κ_min, κ_max = [-1.0], [-1.75], [1.0]  # must be vectors for Fminbox
-    iterations, outer_iterations = 5, 5
-    
-	function ε_ens(κ)
-		err = ε_ensemble(N, M, κ)
-		@info(@sprintf("κ = %.4f | spectrum_err = %.4f", κ[1], err))
-		err
-	end
 
-    optimizer = Fminbox(GradientDescent(alphaguess=0.01))
-    options = Optim.Options(iterations=iterations, outer_iterations=outer_iterations)
-    optimize(ε_ens, κ_min, κ_max, κ₀, optimizer, options; autodiff=AutoForwardDiff())
+    optimizer = Fminbox(GradientDescent())
+    options = Optim.Options(
+		iterations = 1,
+		outer_iterations = 5,
+		f_reltol = 1/100, # relative tolerance for inner convergence of error
+		outer_f_reltol = 1/100, # relative tolerance for outer convergence of error
+		show_trace = true,
+	)
+
+	f = ∂ε_ensemble(N, M; verbose) # provides ∂ε_ensemble(κ)
+	result = optimize(f, κ_min, κ_max, κ₀, optimizer, options; autodiff=AutoForwardDiff())
+	return result
+end
+
+# ╔═╡ 066f1d19-dcaa-4d29-98aa-7726b2e10da3
+md"We run the `opt()` function and once the `κ_opt` value is found, we do a test ensemble run to get the final result"
+
+# ╔═╡ 76ff5f89-138c-440b-8611-cb84645a293f
+let
+	result = opt(verbose=true)
+	κ_opt = Optim.minimizer(result)[1]
+	@info @sprintf("κ_opt = %.4f", κ_opt)
+	@info result
+
+	N, M, L = 2^p_val3, 64, 2π # we increase M=64 to have a better spectrum
+	Ek_mean = run_ensemble(N, M, κ_opt)
+	k = rfftfreq(N, 2π / L * N)
+	plotEk(k, Ek_mean; L, dns_data=(k_dns, Ek_dns))
 end
 
 # ╔═╡ 82421943-e040-4f47-8d41-cad3e94fde70
+md"Through this optimization method we find the following optimal $\kappa_\text{opt}$ values
 
+ $p$ | 6 | 7 | 8 | 9 | 10 |
+-----|-----|-----|-----|----|----|
+ $k_\text{opt}$| 0.17 | 0.02 | 0.01 | -0.01 | 0.07 |
+
+Indicating that
+
+-  $p=6$ suggests $\kappa>0$ even if we know that the coarser grid would require more numerical dissipation $(\kappa<0)$ to account for the unresolved scales. Likely, the resolution is so low that the optimization method struggles to find a meaningful result
+-  $p=7,8,9$ finds the Fromm scheme, $\kappa=0$, which represents a natural balance between the upwind dissipation that prevents spurious oscillations and the central accuracy that avoids over-smoothing the energy cascade
+-  $p=10$ results again in $\kappa>0$ since discontinuities are now better resolved, and numerical dissipation can remain minimal
+"
 
 # ╔═╡ 1b73e425-a5e4-4e49-93bc-e5afea19a3f0
+md"## 4. Conclusion
 
+
+In this tutorial we have built a complete finite volume solver for the 1D viscous Burgers' equation in Julia, and used it as a testbed for data-driven implicit turbulence modelling.
+
+We have selected the $\kappa$ parameter of the van Leer face-reconstruction scheme as a tunable variable.
+
+Automatic differentiation has allowed us to compute exact gradients through the full numerical solver, making this a _differentiable_ solver.
+
+Posing it as an optimization problem, we have found the $\kappa$ value that best matches the DNS energy spectrum at a given resolution.
+
+The results suggest that intermediate resolutions naturally favour the Fromm scheme $(\kappa=0)$, reflecting a balance between numerical dissipation and dispersion. 
+
+More broadly, the workflow demonstrated here: differentiable solver; ensemble averaging; spectrum-based loss, can extend naturally to more complex PDEs and higher-dimensional turbulence models.
+"
 
 # ╔═╡ 88be22fb-b1bd-4727-a7e9-ce211e30929d
 html"""
@@ -2912,6 +2993,8 @@ version = "1.13.0+0"
 # ╟─7aff6f20-d270-4544-88a7-1ef035bedf13
 # ╟─ba716968-6c11-4c90-a09a-efbc94c37f6a
 # ╠═a0df8e19-7de9-48ea-9abc-f0a7bc2adb83
+# ╟─6746096e-8948-498f-a341-534b88ec6c17
+# ╠═cde04a91-f1d1-4ad8-b06b-99fb845a48be
 # ╟─3d5e45c5-7fd0-4e24-ba8a-b498f628a074
 # ╠═f5e58ad0-6998-4eb3-ade7-b4d70b4374df
 # ╠═9b00dd03-996e-4bb3-96a1-e6c19190a352
@@ -2940,6 +3023,7 @@ version = "1.13.0+0"
 # ╠═82475ecb-cdf3-496c-a52b-f98551ebff59
 # ╟─f7ccdbff-483b-4506-ae94-0fffb38529f5
 # ╠═50b6ec5f-5703-4f02-90d0-1cf65501ad26
+# ╟─619a237c-8ba0-401f-b953-d71085c59634
 # ╟─0a18cd65-8b71-45ca-9f5e-efecdd5a9652
 # ╠═c693332c-e754-4f13-a218-9616814e22be
 # ╟─eab80a8c-6f0b-4715-b069-cff8ff8462c3
@@ -2987,7 +3071,6 @@ version = "1.13.0+0"
 # ╟─e3bd6016-4455-4bb6-8c55-966d3ed0ae0d
 # ╟─b27c89c7-6f0b-4974-9e35-9323de822d78
 # ╟─f508364a-03b4-439d-a6e1-b611f802d0b5
-# ╠═8dbab830-a2d8-445e-a235-6707513d11b6
 # ╠═ec313cfc-8853-49ab-9e42-84879b35b619
 # ╟─5a1d0dcc-c1e0-4545-b9a0-f535b0ab585f
 # ╟─c5bedfd7-a740-4f2a-afc9-424476851a27
@@ -3005,14 +3088,18 @@ version = "1.13.0+0"
 # ╠═3ad53729-5923-4e9f-806d-25c63000535b
 # ╟─3e6baf78-b860-4152-a93d-9d832524bce0
 # ╠═302287a8-26d8-469b-a2d0-9ce4e1d39599
-# ╠═7082bb49-1d84-4425-9f34-b690a62be1b1
+# ╟─1773fe9d-53be-4f2b-9b27-6432a4f0715c
 # ╠═317b3ad0-a531-4022-83bc-b646784f6e31
+# ╟─5be4c113-1f8c-40c2-8711-cd977431ab9b
 # ╠═87bbc012-6c1d-4556-b59c-193ecea2e8cc
-# ╠═ed80935b-de6b-47a1-9f0d-caf11f74fd18
 # ╟─82a242bc-b486-4afc-b669-7f4edbbf311e
+# ╟─e85c50c4-b0bd-4f30-b2b7-c02cd3d8471d
+# ╟─fa508394-d588-4c1f-8cba-0f733451b645
 # ╠═8ef057f4-996d-4694-8e0f-f45f347535b5
-# ╠═82421943-e040-4f47-8d41-cad3e94fde70
-# ╠═1b73e425-a5e4-4e49-93bc-e5afea19a3f0
+# ╟─066f1d19-dcaa-4d29-98aa-7726b2e10da3
+# ╠═76ff5f89-138c-440b-8611-cb84645a293f
+# ╟─82421943-e040-4f47-8d41-cad3e94fde70
+# ╟─1b73e425-a5e4-4e49-93bc-e5afea19a3f0
 # ╟─88be22fb-b1bd-4727-a7e9-ce211e30929d
 # ╟─89c19359-564a-474a-bcf7-43528e39b7a4
 # ╟─00000000-0000-0000-0000-000000000001
