@@ -17,7 +17,7 @@ macro bind(def, element)
 end
 
 # ╔═╡ b933b337-8eaa-4cc5-b8d4-bfe784b8fd0a
-using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2, PlutoUI, Roots, ForwardDiff, ADTypes, AbstractFFTs
+using BenchmarkTools, Printf, FFTW, GLMakie, CircularArrays, Random, Test, LaTeXStrings, Downloads, JLD2, PlutoUI, Optim, ForwardDiff, ADTypes, AbstractFFTs
 
 # ╔═╡ c483b5f8-da98-43e2-9f61-f5db8e89e9cc
 md"""
@@ -404,6 +404,7 @@ begin
 	
 	function timeloop!(u, rhs, f_num, ν, dx, κ; t_max=0.1, CFL=0.1, verbose=true)
 		t, i = 0.0, 0
+		verbose && @info u
 		while t < t_max
 			dudt!(rhs, u, f_num, ν, dx, κ)
 			dt = δt(u, dx, ν; CFL)
@@ -458,7 +459,7 @@ Let's code it up!
 "
 
 # ╔═╡ fdc61704-a029-4b5f-a0eb-df77655e398b
-function u0(N, L; k0=10, T=Float64, i=1)
+function u0(N, L; T=Float64, k0=10, i=1)
     Random.seed!(i) # set random seed for different runs!
     A = 2k0^(-5) / (3√π) # constant
     k = rfftfreq(N, 2π / L * N) # [0, 1, 2, ..., N÷2]
@@ -620,8 +621,8 @@ We have all we need now to run our first simulation! So let's get at it. We firs
 We can also play with the value $k$ of the vanLeer k-scheme, as introduced in [#Numerical-flux](#Numerical-flux)"
 
 # ╔═╡ e3314223-f671-4d61-8d4c-58086fb157a3
-function run(N; κ=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, i=1, verbose=true)
-	u = u0(N, L; T, i) |> CircularArray
+function run(N, κ; L=2π, ν=5e-4, t_max=0.1, CFL=0.25, i=1, verbose=true)
+	u = u0(N, L; i, T=eltype(κ)) |> CircularArray
 	rhs = similar(u) |> x -> fill!(x, 0) # RHS array (allocate an array like u, then rhs .= 0)
 	fK = similar(u) |> x -> fill!(x, 0) # Intercell flux array
 	dx = L / N
@@ -658,7 +659,7 @@ md" $N=2^p$"
 # ╔═╡ b6a9f4e2-5780-43ec-811f-855be3749524
 let
 	N = 2^p_val1
-	u = run(N; κ=κ_val1)
+	u = run(N, κ_val1)
 	x = xg(N, 2π; T=eltype(u))
 	plot(x, u)
 end
@@ -676,15 +677,15 @@ $\bar{\hat{E}}(k) = \frac{1}{M}\sum_{i=1}^{M}\hat{E}_i(k)$
 "
 
 # ╔═╡ 56303400-a58b-48b2-93e1-fbadfb37d308
-function run_ensemble(N, M; κ=-1, L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, verbose=false)
-	Ek_i, u = zeros(T, N÷2+1, M), nothing
+function run_ensemble(N, M, κ; L=2π, ν=5e-4, t_max=0.1, CFL=0.25, T=Float64, verbose=false)
+	Ek_i, u = zeros(eltype(κ), N÷2+1, M), nothing
 	for i in 1:M
-		u = run(N; κ, i, verbose)
+		u = run(N, κ; i, verbose)
 		_, Ek = spectrum(u)
 		Ek_i[:, i] .= Ek
 	end
 	Ek_mean = mean(Ek_i, dims=2)[:]
-	return u, Ek_mean
+	return Ek_mean
 end	
 
 # ╔═╡ 5c9b6fb1-a5cd-4c38-926c-29df4e63d71f
@@ -706,7 +707,9 @@ let
 	M = M_val
 	N = 2^p_val2
 	L = 2π
-	u, Ek_mean = run_ensemble(N, M_val; κ=κ_val2)
+	T = Float64
+	
+	Ek_mean = run_ensemble(N, M_val, T(κ_val2))
 	k = rfftfreq(N, 2π / L * N)
 	plotEk(k, Ek_mean; L, dns_data=(k_dns, Ek_dns))
 end
@@ -746,7 +749,146 @@ This is why we have constructed our solver so that $\kappa$ is an input paramete
 "
 
 # ╔═╡ f508364a-03b4-439d-a6e1-b611f802d0b5
-md"### Define an error metric"
+md"### Define an error metric
+
+Since we have access to the DNS data, we will use the energy spectrum as a metric for our loss function. This can be better defined in logarithim space, since we want to be correctly modelling all the scales, ie. both low and high wavenumbers. Thus we take a mean value of the difference at every wavenumber, until the wavenumber cutoff $k_c=N/2+1$ 
+
+$\varepsilon(\kappa) = \dfrac{1}{k_c}\sum_{k=1}^{k_c}\log_{10} \left|\dfrac{\bar{\hat{E}}(k;\kappa)}{\bar{\hat{E}}_\text{DNS}(k)}\right|$
+
+Note that we compute the loss with the ensemble-averaged spectrum so that it is less noisy. Let's code it
+"
+
+# ╔═╡ 8dbab830-a2d8-445e-a235-6707513d11b6
+# ε(Ek, Ek_dns) = sum(abs, log10.(Ek / Ek_dns[1:length(Ek)])) / length(Ek)
+
+# ╔═╡ ec313cfc-8853-49ab-9e42-84879b35b619
+function ε(Ek, Ek_dns)
+	k_min, k_max = 2, length(Ek) - 2
+	Ek_slice = @views Ek[k_min:k_max]
+	Ek_dns_slice = @views Ek_dns[k_min:k_max]
+	sum(abs, @. (log10(Ek_slice / Ek_dns_slice))) / length(Ek_slice)
+end
+
+# ╔═╡ 5a1d0dcc-c1e0-4545-b9a0-f535b0ab585f
+md"With this, we can define the following minimization problem
+
+$\kappa_\text{opt} = \underset{\kappa}{\text{argmin}}\,\,\varepsilon(\bar{\hat{E}}(k;\kappa), \bar{\hat{E}}_\text{DNS}(k))$
+"
+
+# ╔═╡ c5bedfd7-a740-4f2a-afc9-424476851a27
+md"### Compute the gradient of the loss
+
+To be able to run an optimizer for $\kappa$, we should define how to compute the gradient ${\partial \varepsilon}/{\partial \kappa}$ so that we can step in the right (minimum error) direction
+
+$\kappa^{(i+1)}=\kappa^{(i)} - \delta\dfrac{\partial \varepsilon(\kappa^{(i)})}{\partial \kappa}$
+
+where we need to perform a number of iterations ($i$) and use small steps ($\delta$) in order to reach a minimum. This is known as [gradient descend](https://en.wikipedia.org/wiki/Gradient_descent).
+
+A naive approach to compute the loss gradient would be to use a finite difference approximation such as
+
+$\dfrac{\partial \varepsilon}{\partial \kappa}\approx\dfrac{\varepsilon(\kappa+δ\kappa) - \varepsilon(\kappa)}{\delta \kappa}$
+It would be naive because our loss function might be not very smooth, so the gradient of such function can become very noisy! So this would not be particularly helpful to find the correct $\kappa_\text{opt}$ value. 
+"
+
+# ╔═╡ 00e96f3d-9baf-47be-88ae-a123ee353f49
+md"#### Automatic differentiation
+
+Instead, let us introduce [Automatic Differentiation](https://en.wikipedia.org/wiki/Automatic_differentiation) (AD). Specific to computer programs, this technique allows to compute the derivative of a function by tracking all the _analytic_ operators that such function makes use of. Note that in computer programs, we can *only* use analytic operators since we have a finite set of instructions that can be implemented and compiled. So AD takes advantages of this and computes the derivative by chain-rule of the derivatives of all the analytic operators.
+
+Let's show an example with a function containing sharp (but $C^\infty$ - continous) gradients
+"
+
+# ╔═╡ b95ceb0c-8d1a-4426-b348-7a86e512d717
+f(x) = sin(x) * exp(x)
+
+# ╔═╡ 5cdef8d6-1767-4e21-a05c-4f53d644d4b3
+md"By analytical derivation using the chain rule, we know that this function has the derivative"
+
+# ╔═╡ 5048cd7f-f943-46bc-a064-0d021fd3efeb
+df(x) = cos(x) * exp(x) + sin(x) * exp(x)
+
+# ╔═╡ 6b25cceb-f9ba-4a38-b3b3-5439a4b083e4
+md"Julia, being a dynamic-type language, allows to take automatic derivatives by passing a `Dual` number as function input. Dual number contain a value and a derivative. Every time the value of the Dual number is mutated, the derivative is also updated using AD. This is readily implemented in Julia via the [`ForwardDiff.jl`](https://github.com/JuliaDiff/ForwardDiff.jl) package"
+
+# ╔═╡ 70c61c91-55fb-4491-92b4-17fd7793bac9
+let
+	x0 = 4.0
+ 	x = ForwardDiff.Dual{Float64}(x0, one(x0))
+	f(x)
+end
+
+# ╔═╡ 15ad72eb-3bdf-4c15-a324-4d1a3c88bff9
+md"Note that when passing a `Dual` number, the output is the value and the derivative. We can also obtain the derivative directly"
+
+# ╔═╡ 55ae3ccc-b91b-4336-bd02-9f2050a721db
+ForwardDiff.derivative(f, 4.0)
+
+# ╔═╡ d25e73e8-48ef-4203-9aab-b8f2e798279d
+md"And compare it with the analytical derivative"
+
+# ╔═╡ cb7b7b93-515f-47c2-8809-c955e6ffbd0f
+df(4.0)
+
+# ╔═╡ b8f9bdb5-9f3a-49ea-84d4-be36daaab308
+md"Here we see that indeed AD takes exact first-order derivatives -- Nice! Of course, finite differences is never exact since we need $\delta x$ to be infinitessimally small. Even when using $\delta x\approx10^{-15}$ and a central difference we are significantly innacurate"
+
+# ╔═╡ 3ad53729-5923-4e9f-806d-25c63000535b
+(f(4.0 + 10eps(Float64)) - f(4.0 - 10eps(Float64))) /  20eps(Float64)
+
+# ╔═╡ 3e6baf78-b860-4152-a93d-9d832524bce0
+md"#### Differentiable solver
+
+So through AD we can indeed compute the derivative ${\partial \varepsilon}/{\partial \kappa}$ to finally perform gradient descent! Since we have not fixed the input types for any functions of our solver -- that is, we have written each function as `g(x, y)` instead of `g(x::Vector{Float64}, y::Float64)` -- we can propagate `Dual` types using `ForwardDiff.jl`
+
+Let's define a couple of high-level function that we will use for optimization
+"
+
+# ╔═╡ 302287a8-26d8-469b-a2d0-9ce4e1d39599
+ε_ensemble(N, M, κ; kwargs...) = ε(run_ensemble(N, M, κ; kwargs...), Ek_dns)
+
+# ╔═╡ 7082bb49-1d84-4425-9f34-b690a62be1b1
+drun_ensemble2(κ) = (N, M; kwargs...) -> ε_ensemble(N, M; κ, kwargs...) # call: drun_ensemble(κ)(N, M)
+
+# ╔═╡ 317b3ad0-a531-4022-83bc-b646784f6e31
+drun_ensemble(N, M; kwargs...) = κ -> ε_ensemble(N, M, κ; kwargs...) # call: drun_ensemble(N, M)(κ)
+
+# ╔═╡ 87bbc012-6c1d-4556-b59c-193ecea2e8cc
+drun_ensemble(2^6, 4)(-1.0)
+
+# ╔═╡ ed80935b-de6b-47a1-9f0d-caf11f74fd18
+let
+	x0 = ForwardDiff.Dual{Float64}(-1.0, one(-1.0))
+	drun_ensemble(2^6, 4)(x0)
+end
+
+# ╔═╡ 82a242bc-b486-4afc-b669-7f4edbbf311e
+md"### Solve the optimization problem
+
+As we have introduced earlier, we will use gradient descent to optimize $\kappa$. The [`Optim.jl`](https://github.com/JuliaNLSolvers/Optim.jl) package provides several optimizers that we can select. The API is rather simple: define an optimizer, select maximum number of iterations, and use constraints if necessary. Here, since we know that $\kappa<1$, we will set this as an upper bound. For the lower bound, we will let $\kappa>-1.75$ (instead of $\kappa>-1$) to allow for significant upwind bias if required. We will use a the `Fminbox` method for the outer loop optimization which restricts the search within a constrained box. Each outer loop evaluation will be performed by `GradientDescent()`, also with a fixed number of iterations. Last we select how to compute the gradient: of course, we will use AD ;)"
+
+# ╔═╡ 8ef057f4-996d-4694-8e0f-f45f347535b5
+let
+    N = 2^7
+    M = 32
+    κ₀, κ_min, κ_max = [-1.0], [-1.75], [1.0]  # must be vectors for Fminbox
+    iterations, outer_iterations = 5, 5
+    
+	function ε_ens(κ)
+		err = ε_ensemble(N, M, κ)
+		@info(@sprintf("κ = %.4f | spectrum_err = %.4f", κ[1], err))
+		err
+	end
+
+    optimizer = Fminbox(GradientDescent(alphaguess=0.01))
+    options = Optim.Options(iterations=iterations, outer_iterations=outer_iterations)
+    optimize(ε_ens, κ_min, κ_max, κ₀, optimizer, options; autodiff=AutoForwardDiff())
+end
+
+# ╔═╡ 82421943-e040-4f47-8d41-cad3e94fde70
+
+
+# ╔═╡ 1b73e425-a5e4-4e49-93bc-e5afea19a3f0
+
 
 # ╔═╡ 88be22fb-b1bd-4727-a7e9-ce211e30929d
 html"""
@@ -776,10 +918,10 @@ ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
-Roots = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
@@ -792,8 +934,8 @@ ForwardDiff = "~1.3.2"
 GLMakie = "~0.13.8"
 JLD2 = "~0.6.3"
 LaTeXStrings = "~1.4.0"
+Optim = "~2.0.1"
 PlutoUI = "~0.7.79"
-Roots = "~2.2.10"
 """
 
 # ╔═╡ 00000000-0000-0000-0000-000000000002
@@ -802,7 +944,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.11.5"
 manifest_format = "2.0"
-project_hash = "30f12a7e7c13fd1ef7c51e908d0d87417305b87b"
+project_hash = "01e336364957107cc9984f4219f42d55564fb762"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "f7304359109c768cf32dc5fa2d371565bb63b68a"
@@ -841,30 +983,6 @@ git-tree-sha1 = "2d9c9a55f9c93e8887ad391fbae72f8ef55e1177"
 uuid = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
 version = "0.4.5"
 
-[[deps.Accessors]]
-deps = ["CompositionsBase", "ConstructionBase", "Dates", "InverseFunctions", "MacroTools"]
-git-tree-sha1 = "856ecd7cebb68e5fc87abecd2326ad59f0f911f3"
-uuid = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
-version = "0.1.43"
-
-    [deps.Accessors.extensions]
-    AxisKeysExt = "AxisKeys"
-    IntervalSetsExt = "IntervalSets"
-    LinearAlgebraExt = "LinearAlgebra"
-    StaticArraysExt = "StaticArrays"
-    StructArraysExt = "StructArrays"
-    TestExt = "Test"
-    UnitfulExt = "Unitful"
-
-    [deps.Accessors.weakdeps]
-    AxisKeys = "94b1ba4f-4ee9-5380-92f1-94cde586c3c5"
-    IntervalSets = "8197267c-284f-5f27-9208-e0e47529a953"
-    LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
-    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
-    StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
-    Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
-    Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
-
 [[deps.Adapt]]
 deps = ["LinearAlgebra", "Requires"]
 git-tree-sha1 = "7e35fca2bdfba44d797c53dfe63a51fabf39bfc0"
@@ -896,6 +1014,40 @@ version = "0.4.2"
 [[deps.ArgTools]]
 uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.2"
+
+[[deps.ArrayInterface]]
+deps = ["Adapt", "LinearAlgebra"]
+git-tree-sha1 = "d81ae5489e13bc03567d4fbbb06c546a5e53c857"
+uuid = "4fba245c-0d91-5ea0-9b3e-6abc04ee57a9"
+version = "7.22.0"
+
+    [deps.ArrayInterface.extensions]
+    ArrayInterfaceBandedMatricesExt = "BandedMatrices"
+    ArrayInterfaceBlockBandedMatricesExt = "BlockBandedMatrices"
+    ArrayInterfaceCUDAExt = "CUDA"
+    ArrayInterfaceCUDSSExt = ["CUDSS", "CUDA"]
+    ArrayInterfaceChainRulesCoreExt = "ChainRulesCore"
+    ArrayInterfaceChainRulesExt = "ChainRules"
+    ArrayInterfaceGPUArraysCoreExt = "GPUArraysCore"
+    ArrayInterfaceMetalExt = "Metal"
+    ArrayInterfaceReverseDiffExt = "ReverseDiff"
+    ArrayInterfaceSparseArraysExt = "SparseArrays"
+    ArrayInterfaceStaticArraysCoreExt = "StaticArraysCore"
+    ArrayInterfaceTrackerExt = "Tracker"
+
+    [deps.ArrayInterface.weakdeps]
+    BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
+    BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
+    CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+    CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
+    ChainRules = "082447d4-558c-5d27-93f4-14fc19e9eca2"
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+    Metal = "dde4c033-4e86-420c-a63e-0dd931031962"
+    ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
+    SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+    StaticArraysCore = "1e83bf80-4336-4d27-bf5d-d5a4f845583c"
+    Tracker = "9f7883ad-71c0-57eb-9f7f-b5c9e6d3789c"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -1038,11 +1190,6 @@ git-tree-sha1 = "37ea44092930b1811e666c3bc38065d7d87fcc74"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.13.1"
 
-[[deps.CommonSolve]]
-git-tree-sha1 = "78ea4ddbcf9c241827e7035c3a03e2e456711470"
-uuid = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
-version = "0.2.6"
-
 [[deps.CommonSubexpressions]]
 deps = ["MacroTools"]
 git-tree-sha1 = "cda2cfaebb4be89c9084adaca7dd7333369715c5"
@@ -1063,15 +1210,6 @@ weakdeps = ["Dates", "LinearAlgebra"]
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 version = "1.1.1+0"
-
-[[deps.CompositionsBase]]
-git-tree-sha1 = "802bb88cd69dfd1509f6670416bd4434015693ad"
-uuid = "a33af91c-f02d-484b-be07-31d278c5ca2b"
-version = "0.1.2"
-weakdeps = ["InverseFunctions"]
-
-    [deps.CompositionsBase.extensions]
-    CompositionsBaseInverseFunctionsExt = "InverseFunctions"
 
 [[deps.ComputePipeline]]
 deps = ["Observables", "Preferences"]
@@ -1139,6 +1277,56 @@ deps = ["IrrationalConstants", "LogExpFunctions", "NaNMath", "Random", "SpecialF
 git-tree-sha1 = "23163d55f885173722d1e4cf0f6110cdbaf7e272"
 uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
 version = "1.15.1"
+
+[[deps.DifferentiationInterface]]
+deps = ["ADTypes", "LinearAlgebra"]
+git-tree-sha1 = "7ae99144ea44715402c6c882bfef2adbeadbc4ce"
+uuid = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
+version = "0.7.16"
+
+    [deps.DifferentiationInterface.extensions]
+    DifferentiationInterfaceChainRulesCoreExt = "ChainRulesCore"
+    DifferentiationInterfaceDiffractorExt = "Diffractor"
+    DifferentiationInterfaceEnzymeExt = ["EnzymeCore", "Enzyme"]
+    DifferentiationInterfaceFastDifferentiationExt = "FastDifferentiation"
+    DifferentiationInterfaceFiniteDiffExt = "FiniteDiff"
+    DifferentiationInterfaceFiniteDifferencesExt = "FiniteDifferences"
+    DifferentiationInterfaceForwardDiffExt = ["ForwardDiff", "DiffResults"]
+    DifferentiationInterfaceGPUArraysCoreExt = "GPUArraysCore"
+    DifferentiationInterfaceGTPSAExt = "GTPSA"
+    DifferentiationInterfaceMooncakeExt = "Mooncake"
+    DifferentiationInterfacePolyesterForwardDiffExt = ["PolyesterForwardDiff", "ForwardDiff", "DiffResults"]
+    DifferentiationInterfaceReverseDiffExt = ["ReverseDiff", "DiffResults"]
+    DifferentiationInterfaceSparseArraysExt = "SparseArrays"
+    DifferentiationInterfaceSparseConnectivityTracerExt = "SparseConnectivityTracer"
+    DifferentiationInterfaceSparseMatrixColoringsExt = "SparseMatrixColorings"
+    DifferentiationInterfaceStaticArraysExt = "StaticArrays"
+    DifferentiationInterfaceSymbolicsExt = "Symbolics"
+    DifferentiationInterfaceTrackerExt = "Tracker"
+    DifferentiationInterfaceZygoteExt = ["Zygote", "ForwardDiff"]
+
+    [deps.DifferentiationInterface.weakdeps]
+    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+    DiffResults = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
+    Diffractor = "9f5e2b26-1114-432f-b630-d3fe2085c51c"
+    Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
+    EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
+    FastDifferentiation = "eb9bf01b-bf85-4b60-bf87-ee5de06c00be"
+    FiniteDiff = "6a86dc24-6348-571c-b903-95158fe2bd41"
+    FiniteDifferences = "26cc04aa-876d-5657-8c51-4c34ba976000"
+    ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
+    GPUArraysCore = "46192b85-c4d5-4398-a991-12ede77f4527"
+    GTPSA = "b27dd330-f138-47c5-815b-40db9dd9b6e8"
+    Mooncake = "da2b9cff-9c12-43a0-ae48-6db2b0edb7d6"
+    PolyesterForwardDiff = "98d1487c-24ca-40b6-b7ab-df2af84e126b"
+    ReverseDiff = "37e2e3b7-166d-5795-8a7a-e32c996b4267"
+    SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+    SparseConnectivityTracer = "9f842d2f-2579-4b1d-911e-f412cf18a3f5"
+    SparseMatrixColorings = "0a514795-09f3-496d-8182-132a7b665d35"
+    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+    Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
+    Tracker = "9f7883ad-71c0-57eb-9f7f-b5c9e6d3789c"
+    Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [[deps.Distributed]]
 deps = ["Random", "Serialization", "Sockets"]
@@ -1285,6 +1473,24 @@ weakdeps = ["PDMats", "SparseArrays", "StaticArrays", "Statistics"]
     FillArraysStaticArraysExt = "StaticArrays"
     FillArraysStatisticsExt = "Statistics"
 
+[[deps.FiniteDiff]]
+deps = ["ArrayInterface", "LinearAlgebra", "Setfield"]
+git-tree-sha1 = "9340ca07ca27093ff68418b7558ca37b05f8aeb1"
+uuid = "6a86dc24-6348-571c-b903-95158fe2bd41"
+version = "2.29.0"
+
+    [deps.FiniteDiff.extensions]
+    FiniteDiffBandedMatricesExt = "BandedMatrices"
+    FiniteDiffBlockBandedMatricesExt = "BlockBandedMatrices"
+    FiniteDiffSparseArraysExt = "SparseArrays"
+    FiniteDiffStaticArraysExt = "StaticArrays"
+
+    [deps.FiniteDiff.weakdeps]
+    BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
+    BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
+    SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+    StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
 [[deps.FixedPointNumbers]]
 deps = ["Statistics"]
 git-tree-sha1 = "05882d6995ae5c12bb5f36dd2ed3f61c98cbb172"
@@ -1335,6 +1541,11 @@ deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "7a214fdac5ed5f59a22c2d9a885a16da1c74bbc7"
 uuid = "559328eb-81f9-559d-9380-de523a88c83c"
 version = "1.0.17+0"
+
+[[deps.Future]]
+deps = ["Random"]
+uuid = "9fa8497b-333b-5362-9e8d-4d0656e87820"
+version = "1.11.0"
 
 [[deps.GLFW]]
 deps = ["GLFW_jll"]
@@ -1731,6 +1942,12 @@ git-tree-sha1 = "d0205286d9eceadc518742860bf23f703779a3d6"
 uuid = "38a345b3-de98-5d2b-a5d3-14cd9215e700"
 version = "2.41.3+0"
 
+[[deps.LineSearches]]
+deps = ["LinearAlgebra", "NLSolversBase", "NaNMath", "Printf"]
+git-tree-sha1 = "738bdcacfef25b3a9e4a39c28613717a6b23751e"
+uuid = "d3d80556-e9d4-5f37-9878-2ab0fcc64255"
+version = "7.6.0"
+
 [[deps.LinearAlgebra]]
 deps = ["Libdl", "OpenBLAS_jll", "libblastrampoline_jll"]
 uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -1842,6 +2059,12 @@ git-tree-sha1 = "cac9cc5499c25554cba55cd3c30543cff5ca4fab"
 uuid = "46d2c3a1-f734-5fdb-9937-b9b9aeba4221"
 version = "0.2.4"
 
+[[deps.NLSolversBase]]
+deps = ["ADTypes", "DifferentiationInterface", "FiniteDiff", "LinearAlgebra"]
+git-tree-sha1 = "b3f76b463c7998473062992b246045e6961a074e"
+uuid = "d41bc354-129a-5804-8e4c-c37616107c6c"
+version = "8.0.0"
+
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
 git-tree-sha1 = "9b8215b1ee9e78a293f99797cd31375471b2bcae"
@@ -1917,6 +2140,18 @@ deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "1346c9208249809840c91b26703912dff463d335"
 uuid = "efe28fd5-8261-553b-a9e1-b2916fc3738e"
 version = "0.5.6+0"
+
+[[deps.Optim]]
+deps = ["ADTypes", "EnumX", "FillArrays", "LineSearches", "LinearAlgebra", "NLSolversBase", "NaNMath", "PositiveFactorizations", "Printf", "SparseArrays", "Statistics"]
+git-tree-sha1 = "7957b66b4e80f1031417197099f35273f7dd93dd"
+uuid = "429524aa-4258-5aef-a3af-852621145aeb"
+version = "2.0.1"
+
+    [deps.Optim.extensions]
+    OptimMOIExt = "MathOptInterface"
+
+    [deps.Optim.weakdeps]
+    MathOptInterface = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 
 [[deps.Opus_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
@@ -2011,6 +2246,12 @@ version = "0.7.79"
 git-tree-sha1 = "77b3d3605fc1cd0b42d95eba87dfcd2bf67d5ff6"
 uuid = "647866c9-e3ac-4575-94e7-e3d426903924"
 version = "0.1.2"
+
+[[deps.PositiveFactorizations]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "17275485f373e6673f7e7f97051f703ed5b15b20"
+uuid = "85a6dd25-e78a-55b7-8502-1745935b8125"
+version = "0.2.4"
 
 [[deps.PrecompileTools]]
 deps = ["Preferences"]
@@ -2122,28 +2363,6 @@ git-tree-sha1 = "58cdd8fb2201a6267e1db87ff148dd6c1dbd8ad8"
 uuid = "f50d1b31-88e8-58de-be2c-1cc44531875f"
 version = "0.5.1+0"
 
-[[deps.Roots]]
-deps = ["Accessors", "CommonSolve", "Printf"]
-git-tree-sha1 = "8a433b1ede5e9be9a7ba5b1cc6698daa8d718f1d"
-uuid = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
-version = "2.2.10"
-
-    [deps.Roots.extensions]
-    RootsChainRulesCoreExt = "ChainRulesCore"
-    RootsForwardDiffExt = "ForwardDiff"
-    RootsIntervalRootFindingExt = "IntervalRootFinding"
-    RootsSymPyExt = "SymPy"
-    RootsSymPyPythonCallExt = "SymPyPythonCall"
-    RootsUnitfulExt = "Unitful"
-
-    [deps.Roots.weakdeps]
-    ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-    ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
-    IntervalRootFinding = "d2bf35a9-74e0-55ec-b149-d360ff49b807"
-    SymPy = "24249f21-da20-56a4-8eb1-6a02cf4ae2e6"
-    SymPyPythonCall = "bc8888f7-b21e-4b7c-a06a-5d9c9496438c"
-    Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
-
 [[deps.RoundingEmulator]]
 git-tree-sha1 = "40b9edad2e5287e05bd413a38f61a8ff55b9557b"
 uuid = "5eaf0fd0-dfba-4ccb-bf02-d820a40db705"
@@ -2174,6 +2393,12 @@ version = "1.3.0"
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 version = "1.11.0"
+
+[[deps.Setfield]]
+deps = ["ConstructionBase", "Future", "MacroTools", "StaticArraysCore"]
+git-tree-sha1 = "c5391c6ace3bc430ca630251d02ea9687169ca68"
+uuid = "efcf1570-3423-57d1-acb7-fd33fddbac46"
+version = "1.1.2"
 
 [[deps.ShaderAbstractions]]
 deps = ["ColorTypes", "FixedPointNumbers", "GeometryBasics", "LinearAlgebra", "Observables", "StaticArrays"]
@@ -2744,7 +2969,7 @@ version = "1.13.0+0"
 # ╟─f943b4af-fcda-4327-bade-d3c6cc5192ea
 # ╠═e3314223-f671-4d61-8d4c-58086fb157a3
 # ╠═3d5eb2df-709c-4595-a173-500338149eec
-# ╠═f5efd50a-fcb1-45aa-90eb-b4230b8421ca
+# ╟─f5efd50a-fcb1-45aa-90eb-b4230b8421ca
 # ╟─9983affa-5365-49c0-9ede-2dcb33b40cde
 # ╟─f12cd093-a64c-4523-a440-b921571b8697
 # ╟─556a13d8-8e82-45b0-8173-7fa12863f93d
@@ -2761,7 +2986,33 @@ version = "1.13.0+0"
 # ╟─a3d9151f-d0b4-4c16-a38c-bd935305306c
 # ╟─e3bd6016-4455-4bb6-8c55-966d3ed0ae0d
 # ╟─b27c89c7-6f0b-4974-9e35-9323de822d78
-# ╠═f508364a-03b4-439d-a6e1-b611f802d0b5
+# ╟─f508364a-03b4-439d-a6e1-b611f802d0b5
+# ╠═8dbab830-a2d8-445e-a235-6707513d11b6
+# ╠═ec313cfc-8853-49ab-9e42-84879b35b619
+# ╟─5a1d0dcc-c1e0-4545-b9a0-f535b0ab585f
+# ╟─c5bedfd7-a740-4f2a-afc9-424476851a27
+# ╟─00e96f3d-9baf-47be-88ae-a123ee353f49
+# ╠═b95ceb0c-8d1a-4426-b348-7a86e512d717
+# ╟─5cdef8d6-1767-4e21-a05c-4f53d644d4b3
+# ╠═5048cd7f-f943-46bc-a064-0d021fd3efeb
+# ╟─6b25cceb-f9ba-4a38-b3b3-5439a4b083e4
+# ╠═70c61c91-55fb-4491-92b4-17fd7793bac9
+# ╟─15ad72eb-3bdf-4c15-a324-4d1a3c88bff9
+# ╠═55ae3ccc-b91b-4336-bd02-9f2050a721db
+# ╟─d25e73e8-48ef-4203-9aab-b8f2e798279d
+# ╠═cb7b7b93-515f-47c2-8809-c955e6ffbd0f
+# ╟─b8f9bdb5-9f3a-49ea-84d4-be36daaab308
+# ╠═3ad53729-5923-4e9f-806d-25c63000535b
+# ╟─3e6baf78-b860-4152-a93d-9d832524bce0
+# ╠═302287a8-26d8-469b-a2d0-9ce4e1d39599
+# ╠═7082bb49-1d84-4425-9f34-b690a62be1b1
+# ╠═317b3ad0-a531-4022-83bc-b646784f6e31
+# ╠═87bbc012-6c1d-4556-b59c-193ecea2e8cc
+# ╠═ed80935b-de6b-47a1-9f0d-caf11f74fd18
+# ╟─82a242bc-b486-4afc-b669-7f4edbbf311e
+# ╠═8ef057f4-996d-4694-8e0f-f45f347535b5
+# ╠═82421943-e040-4f47-8d41-cad3e94fde70
+# ╠═1b73e425-a5e4-4e49-93bc-e5afea19a3f0
 # ╟─88be22fb-b1bd-4727-a7e9-ce211e30929d
 # ╟─89c19359-564a-474a-bcf7-43528e39b7a4
 # ╟─00000000-0000-0000-0000-000000000001
