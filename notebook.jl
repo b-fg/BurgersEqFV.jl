@@ -954,6 +954,17 @@ Indicating that
 -  $p=10$ results again in $\kappa>0$ since discontinuities are now better resolved, and numerical dissipation can remain minimal
 "
 
+# ╔═╡ be4f4f11-c4fd-4201-8236-f0f4f6c49194
+md"#### Note on AD vs finite differences
+
+It is worth noting that finite differences (FD) could have also been used in practice for this example. You can try it! Just change `autodiff=AutoForwardDiff()` for `autodiff=AutoFiniteDiff()` in the `opt()` function. So what's the benefit of AD?
+
+- Optimization with FD is suitable to optimize a single scalar function, which is the case here. But for high-dimensions (parameters) optimization problems AD can provide a much more efficient method, specially in [reverse mode](http://arxiv.org/abs/1811.05031), as it is typically done in deep learning
+- AD can be more accurate than FD specially near the optimum, where the accuracy of the gradient is important to find the minima
+- By using an ensemble average and fixed Random seeds of the initial condition, FD can easier find a meaningful gradient as well. You can test that this is not the case when changing this settings. In contrast, AD can still find useful gradients in such cases.
+
+"
+
 # ╔═╡ 1b73e425-a5e4-4e49-93bc-e5afea19a3f0
 md"## 4. Conclusion
 
@@ -3099,6 +3110,7 @@ version = "1.13.0+0"
 # ╟─066f1d19-dcaa-4d29-98aa-7726b2e10da3
 # ╠═76ff5f89-138c-440b-8611-cb84645a293f
 # ╟─82421943-e040-4f47-8d41-cad3e94fde70
+# ╟─be4f4f11-c4fd-4201-8236-f0f4f6c49194
 # ╟─1b73e425-a5e4-4e49-93bc-e5afea19a3f0
 # ╟─88be22fb-b1bd-4727-a7e9-ce211e30929d
 # ╟─89c19359-564a-474a-bcf7-43528e39b7a4
