@@ -152,7 +152,7 @@ end
 # ╔═╡ 5d4bef09-8caa-4b38-84c6-1c74d296f519
 let
 	x = ones(1000)
-	@benchmark slow_squares.(ones(1000))
+	@benchmark slow_squares.($x)
 end
 
 # ╔═╡ 1ec6e151-c785-4f44-a3b2-24be1e934dcb
@@ -409,6 +409,7 @@ function δt(u, dx, ν; CFL=0.1)
     return min(dt_c, dt_d)
 end
 
+
 # ╔═╡ f7ccdbff-483b-4506-ae94-0fffb38529f5
 md"### The complete space-time solver
 
@@ -456,7 +457,7 @@ end
 # ╔═╡ eab80a8c-6f0b-4715-b069-cff8ff8462c3
 md"Instead, we see that we cannot do this with standard arrays"
 
-# ╔═╡ 83adcff0-ec11-430b-bfd3-dc08fbc5fb41
+# ╔═╡ c910b491-ad01-4596-89d5-977973c06cb0
 a[end+1] == a[1]
 
 # ╔═╡ a97a40e6-cc4a-4ae8-a99f-edf357bfec49
@@ -467,7 +468,7 @@ Instead of defining the initial condition for $u_i$, we set an initial condition
 
 The analytical function for $\hat{E}(k)$ is
 
-$\hat{E}(k) = A^4k^4e^{-(k/k_0)^2}$
+$\hat{E}(k) = Ak^4e^{-(k/k_0)^2}$
 
 where $A$ is a constant set as $A=2k_0^{-5}/(3\sqrt{\pi})$ so that $\int_0^\infty\hat{E}(k)\mathrm{d}k=1/2$. Here $k_0$ is the wavenumber at which we want the energy to peak, and we select $k_0=10$.
 
@@ -500,7 +501,7 @@ md"Now we check that our implementation is correct"
 
 # ╔═╡ 2ddd6297-9015-4b26-875d-09237bd51c65
 let # check E=1/2
-	N, L = 64, 2π
+	N, L = 128, 2π
 	u_IC = u0(N, L) # as N increases, we get closer to the E=0.5 value
 	E = energy(u_IC)
 	@info("E = $E")
@@ -592,7 +593,10 @@ function plotEk(k, Ek; L=2π, dns_data=nothing) # different function signature f
 end
 
 # ╔═╡ 8cd58cda-be07-4508-919b-115b789c3e9f
-plotEk(u0(64, 2π))
+plotEk(u0(256, 2π))
+
+# ╔═╡ ca4edc98-991f-4f21-92ff-7ad6eb6ac6d9
+2^13
 
 # ╔═╡ 2a1f2672-23db-4dbb-89be-7fd6ae69ac49
 md"Actually, we will also want to visualize the spectrum of the DNS solution on top of our coarse simulation. This simulation has already been run, and data can be find [here](https://github.com/b-fg/BurgersEqFV.jl/tree/main/data). So let's get that spectrum and plot it together with our initial condition spectrum"
@@ -633,7 +637,7 @@ end
 
 # ╔═╡ 91e0be80-d466-406d-90fe-d446b5dab172
 let
-	N, L = 2^8, 2π
+	N, L = 2^6, 2π
 	plotU(xg(N, L), u0(N, L))
 end
 
@@ -3038,7 +3042,7 @@ version = "1.13.0+0"
 # ╟─0a18cd65-8b71-45ca-9f5e-efecdd5a9652
 # ╠═c693332c-e754-4f13-a218-9616814e22be
 # ╟─eab80a8c-6f0b-4715-b069-cff8ff8462c3
-# ╠═83adcff0-ec11-430b-bfd3-dc08fbc5fb41
+# ╠═c910b491-ad01-4596-89d5-977973c06cb0
 # ╟─a97a40e6-cc4a-4ae8-a99f-edf357bfec49
 # ╠═fdc61704-a029-4b5f-a0eb-df77655e398b
 # ╟─cee27da9-5dfe-4ba1-b05a-66279c9ed3a3
@@ -3050,6 +3054,7 @@ version = "1.13.0+0"
 # ╠═45cdb3a3-8a9e-464a-8630-75c6342686d2
 # ╠═5b730ef5-d5d6-419c-9f75-0c4b4bab018a
 # ╠═8cd58cda-be07-4508-919b-115b789c3e9f
+# ╠═ca4edc98-991f-4f21-92ff-7ad6eb6ac6d9
 # ╟─2a1f2672-23db-4dbb-89be-7fd6ae69ac49
 # ╠═98634f8f-7d16-4460-bba3-707b4d31c6cd
 # ╠═eb8ba9fe-9852-45af-8b49-678f86ea98ee
@@ -3106,7 +3111,7 @@ version = "1.13.0+0"
 # ╟─82a242bc-b486-4afc-b669-7f4edbbf311e
 # ╟─e85c50c4-b0bd-4f30-b2b7-c02cd3d8471d
 # ╟─fa508394-d588-4c1f-8cba-0f733451b645
-# ╠═8ef057f4-996d-4694-8e0f-f45f347535b5
+# ╟─8ef057f4-996d-4694-8e0f-f45f347535b5
 # ╟─066f1d19-dcaa-4d29-98aa-7726b2e10da3
 # ╠═76ff5f89-138c-440b-8611-cb84645a293f
 # ╟─82421943-e040-4f47-8d41-cad3e94fde70
